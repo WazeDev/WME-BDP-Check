@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.10.18.01
+// @version     2019.10.18.02
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -207,9 +207,8 @@ function findLiveMapRoutes(startSeg, endSeg, maxLength) {
 
 function findDirectRoute(obj = {}) {
     const {
-            maxLength, /* sOutIds, */ startSeg, startNode, endSeg, endNodeIds
+            maxLength, startSeg, startNode, endSeg, endNodeIds
         } = obj,
-        // processedSegs = [startSeg.attributes.id],
         processedSegs = [],
         sOutIds = startNode.attributes.segIDs.filter(segId => segId !== startSeg.attributes.id),
         segIdsFilter = (nextSegIds, alreadyProcessed) => nextSegIds.filter(value => alreadyProcessed.indexOf(value) === -1),
@@ -273,7 +272,7 @@ function findDirectRoute(obj = {}) {
     return returnRoutes;
 }
 
-async function doCheckBDP() {
+async function doCheckBDP(viaLM = false) {
     const selectedFeatures = W.selectionManager.getSelectedFeatures(),
         segmentSelection = W.selectionManager.getSegmentSelection(),
         numSelectedFeatureSegments = selectedFeatures.filter(feature => feature.model.type === 'segment').length;
@@ -335,16 +334,19 @@ async function doCheckBDP() {
     }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
     if (segmentSelection.segments.length > 2) {
-        // Detour route selected. Lets check BDP checkpoints.
         const routeSegIds = W.selectionManager.getSegmentSelection().getSelectedSegments()
                 .map(segment => segment.attributes.id)
                 .filter(segId => (segId !== endSeg.attributes.id) && (segId !== startSeg.attributes.id)),
             endNodeObj = endSeg.getOtherNode(W.model.nodes.getObjectById(endSeg.attributes.bdpcheck.routeFarEndNodeId)),
             startSegDirection = startSeg.getDirection(),
-            startNodeObjs = (startSegDirection === 1) ? [startSeg.getToNode()] : (startSegDirection === 2) ? [startSeg.getFromNode()] : [startSeg.getToNode(), startSeg.getFromNode()],
+            startNodeObjs = [],
             lastDetourSegId = routeSegIds.filter(el => endNodeObj.attributes.segIDs.includes(el)),
             lastDetourSeg = W.model.segments.getObjectById(lastDetourSegId),
             detourSegs = segmentSelection.segments.slice(1, -1);
+        if ((startSegDirection !== 2) && startSeg.getToNode())
+            startNodeObjs.push(startSeg.getToNode());
+        if ((startSegDirection !== 1) && startSeg.getFromNode())
+            startNodeObjs.push(startSeg.getFromNode());
         if (nameContinuityCheck([lastDetourSeg, endSeg])) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment share a common street name.');
             return;
@@ -361,9 +363,8 @@ async function doCheckBDP() {
             WazeWrap.Alerts.info(SCRIPT_NAME, `BDP will not be applied to this detour route because it is longer than ${((startSeg.attributes.roadType === 7) ? '500m' : '5km')}.`);
             return;
         }
-        // We have a preventable detour. Let's check for a direct route.
-        // First check what is returned by the Live Map routing engine.
-        directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
+        if (viaLM)
+            directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
         if (directRoutes.length === 0) {
             for (let i = 0; i < startNodeObjs.length; i++) {
                 const startNode = startNodeObjs[i];
@@ -376,25 +377,29 @@ async function doCheckBDP() {
         }
     }
     else {
-        // Check bracketing segment name continuity
         if (!nameContinuityCheck([startSeg, endSeg])) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
             return;
         }
-        // Let's check for a "direct route"
-        // First check what is returned by the Live Map routing engine.
-        directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
-        // No direct route found from live-map routing. Let's try to do it manually.
+        if (viaLM)
+            directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
         if (directRoutes.length === 0) {
             const startSegDirection = startSeg.getDirection(),
-                endSegDirection = endSeg.getDirection(),
-                startNodeObjs = (startSegDirection === 1) ? [startSeg.getToNode()] : (startSegDirection === 2) ? [startSeg.getFromNode()] : [startSeg.getToNode(), startSeg.getFromNode()],
-                endNodeObjs = (endSegDirection === 1) ? [endSeg.getFromNode()] : (endSegDirection === 2) ? [endSeg.getToNode()] : [endSeg.getFromNode(), endSeg.getToNode()],
-                endNodeIds = endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id);
+                endSegDirection = endSeg.getDirection();
+            const startNodeObjs = [],
+                endNodeObjs = [];
+            if ((startSegDirection !== 2) && startSeg.getToNode())
+                startNodeObjs.push(startSeg.getToNode());
+            if ((startSegDirection !== 1) && startSeg.getFromNode())
+                startNodeObjs.push(startSeg.getFromNode());
+            if ((endSegDirection !== 2) && endSeg.getToNode())
+                endNodeObjs.push(endSeg.getToNode());
+            if ((endSegDirection !== 1) && endSeg.getFromNode())
+                endNodeObjs.push(endSeg.getFromNode());
             for (let i = 0; i < startNodeObjs.length; i++) {
-                const startNode = startNodeObjs[i]; // ,
+                const startNode = startNodeObjs[i];
                 directRoutes = findDirectRoute({
-                    maxLength, startSeg, startNode, endSeg, endNodeIds
+                    maxLength, startSeg, startNode, endSeg, endNodeIds: endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id)
                 });
                 if (directRoutes.length > 0)
                     break;
@@ -428,19 +433,29 @@ async function doCheckBDP() {
 }
 
 function insertCheckBDPButton(evt) {
+    const $wmeButton = $('#WME-BDPC-WME'),
+        $lmButton = $('#WME-BDPC-LM');
     if (!evt || !evt.object || !evt.object._selectedFeatures || (evt.object._selectedFeatures.length < 2)) {
-        if ($('#WME-BDPC').length > 0)
-            $('#WME-BDPC').remove();
+        if ($wmeButton.length > 0)
+            $wmeButton.remove();
+        if ($lmButton.length > 0)
+            $lmButton.remove();
         return;
     }
     if (evt.object._selectedFeatures.filter(feature => feature.model.type === 'segment').length > 1) {
-        $('.edit-restrictions').after(
-            '<button id="WME-BDPC" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments.">BDP Check</button>'
-        );
+        let htmlOut = '';
+        if ($wmeButton.length === 0)
+            htmlOut += '<button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via WME.">BDP Check (WME)</button>';
+        if ($lmButton.length === 0)
+            htmlOut += '<button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via LM.">BDP Check (LM)</button>';
+        if (htmlOut !== '')
+            $('.edit-restrictions').before(htmlOut);
+        return;
     }
-    else if ($('#WME-BDPC').length > 0) {
-        $('#WME-BDPC').remove();
-    }
+    if ($wmeButton.length > 0)
+        $wmeButton.remove();
+    if ($lmButton.length > 0)
+        $lmButton.remove();
 }
 
 function pathSelected(evt) {
@@ -458,13 +473,18 @@ async function init() {
     W.selectionManager.selectionMediator.on('map:selection:deselectKey', () => { _pathEndSegId = undefined; });
     W.selectionManager.selectionMediator.on('map:selection:featureBoxSelection', () => { _pathEndSegId = undefined; });
     if (W.selectionManager.getSegmentSelection().segments.length > 1) {
-        $('.edit-restrictions').after(
-            '<button id="WME-BDPC" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments.">BDP Check</button>'
+        $('.edit-restrictions').before(
+            '<button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments, via WME.">BDP Check (WME)</button>',
+            '<button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments, via LM.">BDP Check (LM)</button>'
         );
     }
-    $('#sidebar').on('click', '#WME-BDPC', e => {
+    $('#sidebar').on('click', '#WME-BDPC-WME', e => {
         e.preventDefault();
-        doCheckBDP();
+        doCheckBDP(false);
+    });
+    $('#sidebar').on('click', '#WME-BDPC-LM', e => {
+        e.preventDefault();
+        doCheckBDP(true);
     });
     showScriptInfoAlert();
     log(`Fully initialized in ${Math.round(performance.now() - LOAD_BEGIN_TIME)} ms.`);
