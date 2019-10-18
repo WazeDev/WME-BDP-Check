@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.10.18.02
+// @version     2019.10.18.03
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -295,10 +295,11 @@ async function doCheckBDP(viaLM = false) {
     else if (_pathEndSegId !== undefined) {
         startSeg = W.model.segments.getObjectById(segmentSelection.segments[segmentSelection.segments.length - 1].attributes.id);
         endSeg = W.model.segments.getObjectById(_pathEndSegId);
-        const tempSeg = W.model.segments.getObjectById(segmentSelection.segments[segmentSelection.segments.length - 2].attributes.id),
-            tempNodeIds = [tempSeg.attributes.toNodeID, tempSeg.attributes.fromNodeID];
-        endSeg.attributes.bdpcheck = (tempNodeIds.indexOf(endSeg.attributes.toNodeID) > -1) ? { routeFarEndNodeId: endSeg.attributes.toNodeID } : { routeFarEndNodeId: endSeg.attributes.fromNodeID };
-        _pathEndSegId = undefined;
+        const routeNodeIds = segmentSelection.segments.slice(1, -1).flatMap(segment => [segment.attributes.toNodeID, segment.attributes.fromNodeID]);
+        if (routeNodeIds.some(nodeId => endSeg.attributes.fromNodeID === nodeId))
+            endSeg.attributes.bdpcheck = { routeFarEndNodeId: endSeg.attributes.toNodeID };
+        else
+            endSeg.attributes.bdpcheck = { routeFarEndNodeId: endSeg.attributes.fromNodeID };
     }
     else {
         const tempNodeIds = [];
@@ -363,9 +364,10 @@ async function doCheckBDP(viaLM = false) {
             WazeWrap.Alerts.info(SCRIPT_NAME, `BDP will not be applied to this detour route because it is longer than ${((startSeg.attributes.roadType === 7) ? '500m' : '5km')}.`);
             return;
         }
-        if (viaLM)
+        if (viaLM) {
             directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
-        if (directRoutes.length === 0) {
+        }
+        else {
             for (let i = 0; i < startNodeObjs.length; i++) {
                 const startNode = startNodeObjs[i];
                 directRoutes = findDirectRoute({
@@ -381,9 +383,10 @@ async function doCheckBDP(viaLM = false) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
             return;
         }
-        if (viaLM)
+        if (viaLM) {
             directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
-        if (directRoutes.length === 0) {
+        }
+        else {
             const startSegDirection = startSeg.getDirection(),
                 endSegDirection = endSeg.getDirection();
             const startNodeObjs = [],
@@ -392,10 +395,10 @@ async function doCheckBDP(viaLM = false) {
                 startNodeObjs.push(startSeg.getToNode());
             if ((startSegDirection !== 1) && startSeg.getFromNode())
                 startNodeObjs.push(startSeg.getFromNode());
-            if ((endSegDirection !== 2) && endSeg.getToNode())
-                endNodeObjs.push(endSeg.getToNode());
-            if ((endSegDirection !== 1) && endSeg.getFromNode())
+            if ((endSegDirection !== 2) && endSeg.getFromNode())
                 endNodeObjs.push(endSeg.getFromNode());
+            if ((endSegDirection !== 1) && endSeg.getToNode())
+                endNodeObjs.push(endSeg.getToNode());
             for (let i = 0; i < startNodeObjs.length; i++) {
                 const startNode = startNodeObjs[i];
                 directRoutes = findDirectRoute({
