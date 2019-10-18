@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.10.16.03
+// @version     2019.10.18.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -24,7 +24,8 @@ const ALERT_UPDATE = true,
     SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Initial release.'],
     SETTINGS_STORE_NAME = 'WMEBDPC',
     _timeouts = { bootstrap: undefined, saveSettingsToStorage: undefined };
-let _settings = {};
+let _settings = {},
+    _pathEndSegId;
 
 function log(message) { console.log('WME-BDPC:', message); }
 function logError(message) { console.error('WME-BDPC:', message); }
@@ -92,10 +93,6 @@ function checkTimeout(obj) {
     }
 }
 
-function findObjIndex(array, fldName, value) {
-    return array.map(a => a[fldName]).indexOf(value);
-}
-
 function rtgContinuityCheck(segs = []) {
     if (segs.length < 2)
         return false;
@@ -142,80 +139,152 @@ function nameContinuityCheck(segs = []) {
     });
 }
 
+function findLiveMapRoutes(startSeg, endSeg, maxLength) {
+    return new Promise(async resolve => {
+        const start900913center = startSeg.getCenter(),
+            end900913center = endSeg.getCenter(),
+            start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
+            end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
+            url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
+                ? '/RoutingManager/routingRequest'
+                : W.model.countries.getObjectById(106)
+                    ? '/il-RoutingManager/routingRequest'
+                    : '/row-RoutingManager/routingRequest',
+            data = {
+                from: `x:${start4326Center.lon} y:${start4326Center.lat}`,
+                to: `x:${end4326Center.lon} y:${end4326Center.lat}`,
+                returnJSON: true,
+                returnGeometries: true,
+                returnInstructions: false,
+                timeout: 60000,
+                type: 'HISTORIC_TIME',
+                nPaths: 6,
+                clientVersion: '4.0.0',
+                vehType: 'PRIVATE',
+                options: 'AVOID_TOLL_ROADS:f,AVOID_PRIMARIES:f,AVOID_DANGEROUS_TURNS:f,AVOID_FERRIES:f,ALLOW_UTURNS:t'
+            },
+            returnRoutes = [];
+        let jsonData;
+        try {
+            jsonData = await $.ajax({
+                dataType: 'JSON',
+                cache: false,
+                url,
+                data,
+                traditional: true,
+                dataFilter: retData => retData.replace(/NaN/g, '0')
+            }).fail((response, textStatus, errorThrown) => {
+                logWarning(`Route request failed ${(textStatus !== null ? `with ${textStatus}` : '')}\r\n${errorThrown}!`);
+            });
+        }
+        catch (error) {
+            logWarning(JSON.stringify(error));
+            jsonData = { error };
+        }
+        if (!jsonData) {
+            logWarning('No data returned.');
+        }
+        else if (jsonData.error !== undefined) {
+            logWarning(((typeof jsonData.error === 'object') ? $.parseJSON(jsonData.error) : jsonData.error.replace('|', '\r\n')));
+        }
+        else {
+            let routes = (jsonData.coords !== undefined) ? [jsonData] : [];
+            if (jsonData.alternatives !== undefined)
+                routes = routes.concat(jsonData.alternatives);
+            routes.forEach(route => {
+                const fullRouteSegIds = route.response.results.map(result => result.path.segmentId),
+                    fullRouteSegs = W.model.segments.getByIds(fullRouteSegIds);
+                if (nameContinuityCheck(fullRouteSegs) && rtgContinuityCheck(fullRouteSegs)) {
+                    const routeDistance = route.response.results.map(result => result.length).slice(1, -1).reduce((a, b) => a + b);
+                    if (routeDistance < maxLength)
+                        returnRoutes.push(route.response.results.map(result => result.path.segmentId));
+                }
+            });
+        }
+        resolve(returnRoutes);
+    });
+}
+
 function findDirectRoute(obj = {}) {
     const {
-            maxLength, segIds, startSeg, startNode, endSeg, endNodeIds
+            maxLength, /* sOutIds, */ startSeg, startNode, endSeg, endNodeIds
         } = obj,
-        processedSegs = [startSeg.attributes.id],
+        // processedSegs = [startSeg.attributes.id],
+        processedSegs = [],
+        sOutIds = startNode.attributes.segIDs.filter(segId => segId !== startSeg.attributes.id),
         segIdsFilter = (nextSegIds, alreadyProcessed) => nextSegIds.filter(value => alreadyProcessed.indexOf(value) === -1),
-        getNextSegs = (nextSegIds, curSeg, nextNode, idx) => {
-            const rObj = { addPossibleRouteSegments: [], removePossibleRouteSegments: [] };
+        getNextSegs = (nextSegIds, curSeg, nextNode) => {
+            const rObj = { addPossibleRouteSegments: [] };
             for (let i = 0; i < nextSegIds.length; i++) {
                 const nextSeg = W.model.segments.getObjectById(nextSegIds[i]);
                 if (curSeg.isTurnAllowed(nextSeg, nextNode) && nameContinuityCheck([startSeg, nextSeg])) {
-                    if (processedSegs.indexOf(nextSegIds[i]) === -1) {
-                        rObj.addPossibleRouteSegments.push({ startNode: nextNode, seg: nextSeg });
-                        processedSegs.push(nextSegIds[i]);
+                    if (!processedSegs.some(o => (o.fromSegId === curSeg.attributes.id) && (o.toSegId === nextSegIds[i]))) {
+                        rObj.addPossibleRouteSegments.push({ nextSegStartNode: nextNode, nextSeg });
+                        break;
                     }
                 }
             }
-            if (rObj.addPossibleRouteSegments.length === 0)
-                rObj.removePossibleRouteSegments.push(idx);
             return rObj;
-        };
-    let directRouteSegs = [];
-    segIds.some(segId => {
-        const seg = W.model.segments.getObjectById(segId);
-        if (startSeg.isTurnAllowed(seg, startNode) && nameContinuityCheck([startSeg, seg])) {
-            let possibleRouteSegments = [{ startNode, seg }],
-                curLength = 0;
+        },
+        returnRoutes = [];
+    for (let i = 0, len = sOutIds.length; i < len; i++) {
+        const sOut = W.model.segments.getObjectById(sOutIds[i]);
+        if (startSeg.isTurnAllowed(sOut, startNode) && nameContinuityCheck([startSeg, sOut])) {
+            const possibleRouteSegments = [{
+                curSeg: startSeg,
+                nextSegStartNode: startNode,
+                nextSeg: sOut
+            }];
+            let curLength = 0;
             while (possibleRouteSegments.length > 0) {
                 const idx = possibleRouteSegments.length - 1,
-                    curSeg = possibleRouteSegments[idx].seg,
-                    nextNode = curSeg.getOtherNode(possibleRouteSegments[idx].startNode),
-                    nextSegIds = segIdsFilter(nextNode.attributes.segIDs, possibleRouteSegments.map(routeSeg => routeSeg.seg.attributes.id));
-                if (endNodeIds.indexOf(nextNode.attributes.id) > -1) {
-                    directRouteSegs = [startSeg.attributes.id].concat(possibleRouteSegments.map(routeSeg => routeSeg.seg.attributes.id), [endSeg.attributes.id]);
-                    possibleRouteSegments = [];
-                    return true;
+                    curSeg = possibleRouteSegments[idx].nextSeg,
+                    curSegStartNode = possibleRouteSegments[idx].nextSegStartNode,
+                    curSegEndNode = curSeg.getOtherNode(curSegStartNode),
+                    curSegEndNodeSOutIds = segIdsFilter(curSegEndNode.attributes.segIDs, possibleRouteSegments.map(routeSeg => routeSeg.nextSeg.attributes.id));
+                if ((endNodeIds.indexOf(curSegEndNode.attributes.id) > -1) && curSeg.isTurnAllowed(endSeg, curSegEndNode)) {
+                    returnRoutes.push([startSeg.attributes.id].concat(possibleRouteSegments.map(routeSeg => routeSeg.nextSeg.attributes.id), [endSeg.attributes.id]));
+                    possibleRouteSegments.splice(idx, 1);
                 }
-                if ((curLength + curSeg.attributes.length) > maxLength) {
+                else if ((curLength + curSeg.attributes.length) > maxLength) {
                     possibleRouteSegments.splice(idx, 1);
                     curLength -= curSeg.attributes.length;
                 }
                 else {
-                    const nextSegsObj = getNextSegs(nextSegIds, curSeg, nextNode, idx);
-                    if (nextSegsObj.removePossibleRouteSegments.length > 0) {
-                        curLength -= curSeg.attributes.length;
-                        possibleRouteSegments.splice(nextSegsObj.removePossibleRouteSegments[0], 1);
+                    const nextSegObj = getNextSegs(curSegEndNodeSOutIds, curSeg, curSegEndNode);
+                    if (nextSegObj.addPossibleRouteSegments.length > 0) {
+                        curLength += curSeg.attributes.length;
+                        possibleRouteSegments.push(nextSegObj.addPossibleRouteSegments[0]);
+                        processedSegs.push({ fromSegId: curSeg.attributes.id, toSegId: nextSegObj.addPossibleRouteSegments[0].nextSeg.attributes.id });
                     }
                     else {
-                        curLength += curSeg.attributes.length;
-                        for (let i = 0; i < nextSegsObj.addPossibleRouteSegments.length; i++)
-                            possibleRouteSegments.push(nextSegsObj.addPossibleRouteSegments[i]);
+                        curLength -= curSeg.attributes.length;
+                        possibleRouteSegments.splice(idx, 1);
                     }
                 }
             }
+            if (returnRoutes.length > 0)
+                break;
         }
-        return false;
-    });
-    return directRouteSegs;
+        else {
+            processedSegs.push({ fromSegId: startSeg.attributes.id, toSegId: sOut.attributes.id });
+        }
+    }
+    return returnRoutes;
 }
 
 async function doCheckBDP() {
     const selectedFeatures = W.selectionManager.getSelectedFeatures(),
         segmentSelection = W.selectionManager.getSegmentSelection(),
         numSelectedFeatureSegments = selectedFeatures.filter(feature => feature.model.type === 'segment').length;
-    let jsonData,
-        startSeg,
+    let startSeg,
         endSeg,
-        maxLength,
-        directRoute = [];
+        directRoutes = [];
     if ((segmentSelection.segments.length < 2) || (numSelectedFeatureSegments < 2)) {
         WazeWrap.Alerts.error(SCRIPT_NAME, 'You must select either the two <i>bracketing segments</i> or an entire detour route with <i>bracketing segments</i>.');
         return;
     }
-    if (segmentSelection.multipleConnectedComponents && ((segmentSelection.segments.length > 2) || (numSelectedFeatureSegments < 2))) {
+    if (segmentSelection.multipleConnectedComponents && ((segmentSelection.segments.length > 2) || (numSelectedFeatureSegments > 2))) {
         WazeWrap.Alerts.error(SCRIPT_NAME,
             'If you select more than 2 segments, the selection of segments must be continuous.<br><br>'
             + 'Either select just the two bracketing segments or an entire detour route with bracketing segments.');
@@ -224,15 +293,23 @@ async function doCheckBDP() {
     if (segmentSelection.segments.length === 2) {
         [startSeg, endSeg] = segmentSelection.segments;
     }
+    else if (_pathEndSegId !== undefined) {
+        startSeg = W.model.segments.getObjectById(segmentSelection.segments[segmentSelection.segments.length - 1].attributes.id);
+        endSeg = W.model.segments.getObjectById(_pathEndSegId);
+        const tempSeg = W.model.segments.getObjectById(segmentSelection.segments[segmentSelection.segments.length - 2].attributes.id),
+            tempNodeIds = [tempSeg.attributes.toNodeID, tempSeg.attributes.fromNodeID];
+        endSeg.attributes.bdpcheck = (tempNodeIds.indexOf(endSeg.attributes.toNodeID) > -1) ? { routeFarEndNodeId: endSeg.attributes.toNodeID } : { routeFarEndNodeId: endSeg.attributes.fromNodeID };
+        _pathEndSegId = undefined;
+    }
     else {
         const tempNodeIds = [];
         segmentSelection.segments.forEach(segment => {
-            let idx = findObjIndex(tempNodeIds, 'nodeId', segment.attributes.fromNodeID);
+            let idx = tempNodeIds.map(tempNodeId => tempNodeId.nodeId).indexOf(segment.attributes.fromNodeID);
             if (idx > -1)
                 tempNodeIds.splice(idx, 1);
             else
                 tempNodeIds.push({ nodeId: segment.attributes.fromNodeID, segId: segment.attributes.id });
-            idx = findObjIndex(tempNodeIds, 'nodeId', segment.attributes.toNodeID);
+            idx = tempNodeIds.map(tempNodeId => tempNodeId.nodeId).indexOf(segment.attributes.toNodeID);
             if (idx > -1)
                 tempNodeIds.splice(idx, 1);
             else
@@ -245,7 +322,6 @@ async function doCheckBDP() {
         startSeg = W.model.segments.getObjectById(tempNodeIds[0].segId);
         endSeg = W.model.segments.getObjectById(tempNodeIds[1].segId);
         endSeg.attributes.bdpcheck = { routeFarEndNodeId: tempNodeIds[1].nodeId };
-        maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
     }
     if ((startSeg.attributes.roadType < 3) || (startSeg.attributes.roadType === 4) || (startSeg.attributes.roadType === 5) || (startSeg.attributes.roadType > 7)
         || (endSeg.attributes.roadType < 3) || (endSeg.attributes.roadType === 4) || (endSeg.attributes.roadType === 5) || (endSeg.attributes.roadType > 7)
@@ -257,6 +333,7 @@ async function doCheckBDP() {
         WazeWrap.Alerts.info(SCRIPT_NAME, 'One bracketing segment is a minor highway while the other is not. BDP only applies when bracketing segments are in the same road type group.');
         return;
     }
+    const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
     if (segmentSelection.segments.length > 2) {
         // Detour route selected. Lets check BDP checkpoints.
         const routeSegIds = W.selectionManager.getSegmentSelection().getSelectedSegments()
@@ -285,107 +362,52 @@ async function doCheckBDP() {
             return;
         }
         // We have a preventable detour. Let's check for a direct route.
-        for (let i = 0; i < startNodeObjs.length; i++) {
-            const startNode = startNodeObjs[i],
-                segIds = startNode.attributes.segIDs.filter(segId => segId !== startSeg.attributes.id);
-            directRoute = findDirectRoute({
-                maxLength, segIds, startSeg, startNode, endSeg, endNodeIds: [endNodeObj.attributes.id]
-            });
-            if (directRoute.length > 0)
-                break;
+        // First check what is returned by the Live Map routing engine.
+        directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
+        if (directRoutes.length === 0) {
+            for (let i = 0; i < startNodeObjs.length; i++) {
+                const startNode = startNodeObjs[i];
+                directRoutes = findDirectRoute({
+                    maxLength, startSeg, startNode, endSeg, endNodeIds: [endNodeObj.attributes.id]
+                });
+                if (directRoutes.length > 0)
+                    break;
+            }
         }
-    }
-    // Check bracketing segment name continuity
-    if (!nameContinuityCheck([startSeg, endSeg])) {
-        WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
-        return;
-    }
-    // Let's check for a "direct route"
-    // First check what is returned by the Live Map routing engine.
-    const start900913center = startSeg.getCenter(),
-        end900913center = endSeg.getCenter(),
-        start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
-        end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
-        url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
-            ? '/RoutingManager/routingRequest'
-            : W.model.countries.getObjectById(106)
-                ? '/il-RoutingManager/routingRequest'
-                : '/row-RoutingManager/routingRequest',
-        data = {
-            from: `x:${start4326Center.lon} y:${start4326Center.lat}`,
-            to: `x:${end4326Center.lon} y:${end4326Center.lat}`,
-            returnJSON: true,
-            returnGeometries: true,
-            returnInstructions: false,
-            timeout: 60000,
-            type: 'HISTORIC_TIME',
-            nPaths: 6,
-            clientVersion: '4.0.0',
-            vehType: 'PRIVATE',
-            options: 'AVOID_TOLL_ROADS:f,AVOID_PRIMARIES:f,AVOID_DANGEROUS_TURNS:f,AVOID_FERRIES:f,ALLOW_UTURNS:t'
-        };
-    try {
-        jsonData = await $.ajax({
-            dataType: 'JSON',
-            cache: false,
-            url,
-            data,
-            traditional: true,
-            dataFilter: retData => retData.replace(/NaN/g, '0')
-        }).fail((response, textStatus, errorThrown) => { logWarning(`Route request failed ${(textStatus !== null ? `with ${textStatus}` : '')}\r\n${errorThrown}!`); });
-    }
-    catch (error) {
-        logWarning(JSON.stringify(error));
-    }
-    if (!jsonData) {
-        logWarning('No data returned.');
-    }
-    else if (jsonData.error !== undefined) {
-        logWarning(jsonData.error.replace('|', '\r\n'));
     }
     else {
-        let routes = (jsonData.coords !== undefined) ? [jsonData] : [];
-        if (jsonData.alternatives !== undefined)
-            routes = routes.concat(jsonData.alternatives);
-        const directRouteObj = routes.find(el => {
-            const fullRouteSegIds = el.response.results.map(result => result.path.segmentId),
-                fullRouteSegs = W.model.segments.getByIds(fullRouteSegIds);
-            if (nameContinuityCheck(fullRouteSegs) && rtgContinuityCheck(fullRouteSegs)) {
-                // name and rtg continuity exists, let's check distance
-                // using 5km for mH and 50km for MH-FW on purpose. This is because a true "detour path" shouldn't be longer than 500m or 5km respectively.
-                const routeDistance = el.response.results.map(result => result.length).slice(1, -1).reduce((a, b) => a + b);
-                if (routeDistance < maxLength)
-                    return true;
+        // Check bracketing segment name continuity
+        if (!nameContinuityCheck([startSeg, endSeg])) {
+            WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
+            return;
+        }
+        // Let's check for a "direct route"
+        // First check what is returned by the Live Map routing engine.
+        directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
+        // No direct route found from live-map routing. Let's try to do it manually.
+        if (directRoutes.length === 0) {
+            const startSegDirection = startSeg.getDirection(),
+                endSegDirection = endSeg.getDirection(),
+                startNodeObjs = (startSegDirection === 1) ? [startSeg.getToNode()] : (startSegDirection === 2) ? [startSeg.getFromNode()] : [startSeg.getToNode(), startSeg.getFromNode()],
+                endNodeObjs = (endSegDirection === 1) ? [endSeg.getFromNode()] : (endSegDirection === 2) ? [endSeg.getToNode()] : [endSeg.getFromNode(), endSeg.getToNode()],
+                endNodeIds = endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id);
+            for (let i = 0; i < startNodeObjs.length; i++) {
+                const startNode = startNodeObjs[i]; // ,
+                directRoutes = findDirectRoute({
+                    maxLength, startSeg, startNode, endSeg, endNodeIds
+                });
+                if (directRoutes.length > 0)
+                    break;
             }
-            return false;
-        });
-        if (directRouteObj !== undefined)
-            directRoute = directRouteObj.response.results.map(result => result.path.segmentId);
-    }
-    // No direct route found from live-map routing. Let's try to do it manually.
-    if (directRoute.length === 0) {
-        const startSegDirection = startSeg.getDirection(),
-            endSegDirection = endSeg.getDirection(),
-            startNodeObjs = (startSegDirection === 1) ? [startSeg.getToNode()] : (startSegDirection === 2) ? [startSeg.getFromNode()] : [startSeg.getToNode(), startSeg.getFromNode()],
-            endNodeObjs = (endSegDirection === 1) ? [endSeg.getFromNode()] : (endSegDirection === 2) ? [endSeg.getToNode()] : [endSeg.getFromNode(), endSeg.getToNode()],
-            endNodeIds = endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id);
-        for (let i = 0; i < startNodeObjs.length; i++) {
-            const startNode = startNodeObjs[i],
-                segIds = startNode.attributes.segIDs.filter(segId => segId !== startSeg.attributes.id);
-            directRoute = findDirectRoute({
-                maxLength, segIds, startSeg, startNode, endSeg, endNodeIds
-            });
-            if (directRoute.length > 0)
-                break;
         }
     }
-    if (directRoute.length > 0) {
+    if (directRoutes.length > 0) {
         WazeWrap.Alerts.confirm(SCRIPT_NAME,
             'A <b>direct route</b> was found! Would you like to select the direct route?',
             () => {
                 const segments = [];
-                for (let i = 0; i < directRoute.length; i++) {
-                    const seg = W.model.segments.getObjectById(directRoute[i]);
+                for (let i = 0; i < directRoutes[0].length; i++) {
+                    const seg = W.model.segments.getObjectById(directRoutes[0][i]);
                     if (seg !== 'undefined')
                         segments.push(seg);
                 }
@@ -421,10 +443,20 @@ function insertCheckBDPButton(evt) {
     }
 }
 
+function pathSelected(evt) {
+    if (evt && evt.feature && evt.feature.model && (evt.feature.model.type === 'segment'))
+        _pathEndSegId = evt.feature.model.attributes.id;
+}
+
 async function init() {
     log('Initializing.');
     await loadSettingsFromStorage();
     W.selectionManager.events.register('selectionchanged', null, insertCheckBDPButton);
+    W.selectionManager.selectionMediator.on('map:selection:pathSelect', pathSelected);
+    W.selectionManager.selectionMediator.on('map:selection:featureClick', () => { _pathEndSegId = undefined; });
+    W.selectionManager.selectionMediator.on('map:selection:clickOut', () => { _pathEndSegId = undefined; });
+    W.selectionManager.selectionMediator.on('map:selection:deselectKey', () => { _pathEndSegId = undefined; });
+    W.selectionManager.selectionMediator.on('map:selection:featureBoxSelection', () => { _pathEndSegId = undefined; });
     if (W.selectionManager.getSegmentSelection().segments.length > 1) {
         $('.edit-restrictions').after(
             '<button id="WME-BDPC" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments.">BDP Check</button>'
