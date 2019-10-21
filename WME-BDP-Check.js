@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.10.18.03
+// @version     2019.10.21.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -23,9 +23,12 @@ const ALERT_UPDATE = true,
     SCRIPT_VERSION = GM_info.script.version,
     SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Initial release.'],
     SETTINGS_STORE_NAME = 'WMEBDPC',
+    sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
     _timeouts = { bootstrap: undefined, saveSettingsToStorage: undefined };
 let _settings = {},
-    _pathEndSegId;
+    _pathEndSegId,
+    _restoreZoomLevel,
+    _restoreMapCenter;
 
 function log(message) { console.log('WME-BDPC:', message); }
 function logError(message) { console.error('WME-BDPC:', message); }
@@ -91,6 +94,48 @@ function checkTimeout(obj) {
             window.clearTimeout(_timeouts[obj.timeout]);
         _timeouts[obj.timeout] = undefined;
     }
+}
+
+function getMidpoint(startSeg, endSeg) {
+    let startCenter = startSeg.getCenter(),
+        endCenter = endSeg.getCenter();
+    startCenter = WazeWrap.Geometry.ConvertTo4326(startCenter.x, startCenter.y);
+    endCenter = WazeWrap.Geometry.ConvertTo4326(endCenter.x, endCenter.y);
+    let lon1 = startCenter.lon,
+        lat1 = startCenter.lat,
+        lat2 = endCenter.lat;
+    const piDiv = Math.PI / 180,
+        divPi = 180 / Math.PI,
+        lon2 = endCenter.lon,
+        dLon = ((lon2 - lon1) * piDiv);
+    lat1 *= piDiv;
+    lat2 *= piDiv;
+    lon1 *= piDiv;
+    const bX = Math.cos(lat2) * Math.cos(dLon),
+        bY = Math.cos(lat2) * Math.sin(dLon),
+        lat3 = (Math.atan2(Math.sin(lat1) + Math.sin(lat2), Math.sqrt((Math.cos(lat1) + bX) * (Math.cos(lat1) + bX) + bY * bY))) * divPi,
+        lon3 = (lon1 + Math.atan2(bY, Math.cos(lat1) + bX)) * divPi;
+    return WazeWrap.Geometry.ConvertTo900913(lon3, lat3);
+}
+
+function doZoom(restore = false, zoom = -1, coordObj = {}) {
+    return new Promise(async resolve => {
+        if ((zoom === -1) || (Object.entries(coordObj).length === 0))
+            return;
+        W.map.setCenter(coordObj);
+        if (restore || (W.map.getZoom() > zoom))
+            W.map.zoomTo(zoom);
+        if (restore) {
+            _restoreZoomLevel = undefined;
+            _restoreMapCenter = undefined;
+        }
+        else {
+            WazeWrap.Alerts.info(SCRIPT_NAME, 'Waiting for WME to populate after zoom level change.<br>Proceeding in 2 seconds...');
+            await sleep(2000);
+            $('#toast-container-wazedev > .toast-info').find('.toast-close-button').click();
+        }
+        resolve();
+    });
 }
 
 function rtgContinuityCheck(segs = []) {
@@ -334,6 +379,12 @@ async function doCheckBDP(viaLM = false) {
         return;
     }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
+    if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 4))
+        || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 3))) {
+        _restoreZoomLevel = W.map.getZoom();
+        _restoreMapCenter = W.map.getCenter();
+        await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
+    }
     if (segmentSelection.segments.length > 2) {
         const routeSegIds = W.selectionManager.getSegmentSelection().getSelectedSegments()
                 .map(segment => segment.attributes.id)
@@ -350,18 +401,22 @@ async function doCheckBDP(viaLM = false) {
             startNodeObjs.push(startSeg.getFromNode());
         if (nameContinuityCheck([lastDetourSeg, endSeg])) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment share a common street name.');
+            doZoom(true, _restoreZoomLevel, _restoreMapCenter);
             return;
         }
         if (rtgContinuityCheck([lastDetourSeg, endSeg])) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment are in the same road type group.');
+            doZoom(true, _restoreZoomLevel, _restoreMapCenter);
             return;
         }
         if (detourSegs.length < 2) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because it is less than 2 segments long.');
+            doZoom(true, _restoreZoomLevel, _restoreMapCenter);
             return;
         }
         if (detourSegs.map(seg => seg.attributes.length).reduce((a, b) => a + b) > ((startSeg.attributes.roadType === 7) ? 500 : 5000)) {
             WazeWrap.Alerts.info(SCRIPT_NAME, `BDP will not be applied to this detour route because it is longer than ${((startSeg.attributes.roadType === 7) ? '500m' : '5km')}.`);
+            doZoom(true, _restoreZoomLevel, _restoreMapCenter);
             return;
         }
         if (viaLM) {
@@ -381,6 +436,7 @@ async function doCheckBDP(viaLM = false) {
     else {
         if (!nameContinuityCheck([startSeg, endSeg])) {
             WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
+            doZoom(true, _restoreZoomLevel, _restoreMapCenter);
             return;
         }
         if (viaLM) {
@@ -420,18 +476,21 @@ async function doCheckBDP(viaLM = false) {
                         segments.push(seg);
                 }
                 W.selectionManager.setSelectedModels(segments);
+                doZoom(true, _restoreZoomLevel, _restoreMapCenter);
             },
-            () => { }, 'Yes', 'No');
+            () => { doZoom(true, _restoreZoomLevel, _restoreMapCenter); }, 'Yes', 'No');
     }
     else if (segmentSelection.segments.length === 2) {
         WazeWrap.Alerts.info(SCRIPT_NAME,
             'No direct routes found between the two selected segments. A BDP penalty <b>will not</b> be applied to any routes.'
                 + '<br><b>Note:</b> This could also be caused by the distance between the two selected segments is longer than than the allowed distance for detours.');
+        doZoom(true, _restoreZoomLevel, _restoreMapCenter);
     }
     else {
         WazeWrap.Alerts.info(SCRIPT_NAME,
             'No direct routes found between the possible detour bracketing segments. A BDP penalty <b>will not</b> be applied to the selected route.'
                 + '<br><b>Note:</b> This could also be because any possible direct routes are very long, which would take longer to travel than taking the selected route (even with penalty).');
+        doZoom(true, _restoreZoomLevel, _restoreMapCenter);
     }
 }
 
