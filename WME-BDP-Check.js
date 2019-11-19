@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.10.21.01
+// @version     2019.11.19.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -38,20 +38,18 @@ function logDebug(message) {
         console.log('WME-BDPC:', message);
 }
 
-function loadSettingsFromStorage() {
-    return new Promise(async resolve => {
-        const defaultSettings = {
-                lastSaved: 0,
-                lastVersion: undefined
-            },
-            loadedSettings = $.parseJSON(localStorage.getItem(SETTINGS_STORE_NAME));
-        _settings = $.extend({}, defaultSettings, loadedSettings);
-        const serverSettings = await WazeWrap.Remote.RetrieveSettings(SETTINGS_STORE_NAME);
-        if (serverSettings && (serverSettings.lastSaved > _settings.lastSaved))
-            $.extend(_settings, serverSettings);
-        _timeouts.saveSettingsToStorage = window.setTimeout(saveSettingsToStorage, 5000);
-        resolve();
-    });
+async function loadSettingsFromStorage() {
+    const defaultSettings = {
+            lastSaved: 0,
+            lastVersion: undefined
+        },
+        loadedSettings = $.parseJSON(localStorage.getItem(SETTINGS_STORE_NAME)),
+        serverSettings = await WazeWrap.Remote.RetrieveSettings(SETTINGS_STORE_NAME);
+    _settings = $.extend({}, defaultSettings, loadedSettings);
+    if (serverSettings && (serverSettings.lastSaved > _settings.lastSaved))
+        $.extend(_settings, serverSettings);
+    _timeouts.saveSettingsToStorage = window.setTimeout(saveSettingsToStorage, 5000);
+    return Promise.resolve();
 }
 
 function saveSettingsToStorage() {
@@ -118,24 +116,22 @@ function getMidpoint(startSeg, endSeg) {
     return WazeWrap.Geometry.ConvertTo900913(lon3, lat3);
 }
 
-function doZoom(restore = false, zoom = -1, coordObj = {}) {
-    return new Promise(async resolve => {
-        if ((zoom === -1) || (Object.entries(coordObj).length === 0))
-            return;
-        W.map.setCenter(coordObj);
-        if (restore || (W.map.getZoom() > zoom))
-            W.map.zoomTo(zoom);
-        if (restore) {
-            _restoreZoomLevel = undefined;
-            _restoreMapCenter = undefined;
-        }
-        else {
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'Waiting for WME to populate after zoom level change.<br>Proceeding in 2 seconds...');
-            await sleep(2000);
-            $('#toast-container-wazedev > .toast-info').find('.toast-close-button').click();
-        }
-        resolve();
-    });
+async function doZoom(restore = false, zoom = -1, coordObj = {}) {
+    if ((zoom === -1) || (Object.entries(coordObj).length === 0))
+        return Promise.resolve();
+    W.map.setCenter(coordObj);
+    if (restore || (W.map.getZoom() > zoom))
+        W.map.zoomTo(zoom);
+    if (restore) {
+        _restoreZoomLevel = undefined;
+        _restoreMapCenter = undefined;
+    }
+    else {
+        WazeWrap.Alerts.info(SCRIPT_NAME, 'Waiting for WME to populate after zoom level change.<br>Proceeding in 2 seconds...');
+        await sleep(2000);
+        $('#toast-container-wazedev > .toast-info').find('.toast-close-button').click();
+    }
+    return Promise.resolve();
 }
 
 function rtgContinuityCheck(segs = []) {
@@ -150,104 +146,146 @@ function rtgContinuityCheck(segs = []) {
 function nameContinuityCheck(segs = []) {
     if (segs.length < 2)
         return false;
-    const streetNames = [];
+    const bs1StreetNames = [],
+        bs2StreetNames = [],
+        streetNames = [];
     let street;
     if (segs[0].attributes.primaryStreetID) {
         street = W.model.streets.getObjectById(segs[0].attributes.primaryStreetID);
-        if (street && street.name && (street.name.length > 0))
-            streetNames.push(street.name);
+        if (street && street.name && (street.name.length > 0)) {
+            if (segs.length === 2)
+                streetNames.push(street.name);
+            else
+                bs1StreetNames.push(street.name);
+        }
     }
     if (segs[0].attributes.streetIDs.length > 0) {
         for (let i = 0; i < segs[0].attributes.streetIDs.length; i++) {
             street = W.model.streets.getObjectById(segs[0].attributes.streetIDs[i]);
-            if (street && street.name && (street.name.length > 0))
-                streetNames.push(street.name);
+            if (street && street.name && (street.name.length > 0)) {
+                if (segs.length === 2)
+                    streetNames.push(street.name);
+                else
+                    bs1StreetNames.push(street.name);
+            }
         }
     }
-    if (streetNames.length === 0)
+    if (((segs.length === 2) && (streetNames.length === 0))
+        || ((segs.length > 2) && (bs1StreetNames.length === 0)))
         return false;
-    segs.splice(0, 1);
-    return segs.every(el => {
-        if (el.attributes.primaryStreetID) {
-            street = W.model.streets.getObjectById(el.attributes.primaryStreetID);
-            if (street && street.name && (street.name.length > 0) && streetNames.includes(street.name))
+    if (segs.length === 2) {
+        if (segs[1].attributes.primaryStreetID) {
+            street = W.model.streets.getObjectById(segs[1].attributes.primaryStreetID);
+            if (street && street.name && streetNames.includes(street.name))
                 return true;
         }
-        if (el.attributes.streetIDs.length > 0) {
-            for (let i = 0; i < el.attributes.streetIDs.length; i++) {
-                street = W.model.streets.getObjectById(el.attributes.streetIDs[i]);
-                if (street && street.name && (street.name.length > 0) && streetNames.includes(street.name))
+        if (segs[1].attributes.streetIDs.length > 0) {
+            for (let i = 0; i < segs[1].attributes.streetIDs.length; i++) {
+                street = W.model.streets.getObjectById(segs[1].attributes.streetIDs[i]);
+                if (street && street.name && streetNames.includes(street.name))
                     return true;
             }
         }
-        return false;
-    });
+    }
+    else {
+        segs.splice(0, 1);
+        const lastIdx = segs.length - 1;
+        if (segs[lastIdx].attributes.primaryStreetID) {
+            street = W.model.streets.getObjectById(segs[lastIdx].attributes.primaryStreetID);
+            if (street && street.name && (street.name.length > 0))
+                bs2StreetNames.push(street.name);
+        }
+        if (segs[lastIdx].attributes.streetIDs.length > 0) {
+            for (let i = 0; i < segs[lastIdx].attributes.streetIDs.length; i++) {
+                street = W.model.streets.getObjectById(segs[lastIdx].attributes.streetIDs[i]);
+                if (street && street.name && (street.name.length > 0))
+                    bs2StreetNames.push(street.name);
+            }
+        }
+        if (bs2StreetNames.length === 0)
+            return false;
+        segs.splice(-1, 1);
+        return segs.every(el => {
+            if (el.attributes.primaryStreetID) {
+                street = W.model.streets.getObjectById(el.attributes.primaryStreetID);
+                if (street && street.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
+                    return true;
+            }
+            if (el.attributes.streetIDs.length > 0) {
+                for (let i = 0; i < el.attributes.streetIDs.length; i++) {
+                    street = W.model.streets.getObjectById(el.attributes.streetIDs[i]);
+                    if (street && street.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
+                        return true;
+                }
+            }
+            return false;
+        });
+    }
+    return false;
 }
 
-function findLiveMapRoutes(startSeg, endSeg, maxLength) {
-    return new Promise(async resolve => {
-        const start900913center = startSeg.getCenter(),
-            end900913center = endSeg.getCenter(),
-            start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
-            end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
-            url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
-                ? '/RoutingManager/routingRequest'
-                : W.model.countries.getObjectById(106)
-                    ? '/il-RoutingManager/routingRequest'
-                    : '/row-RoutingManager/routingRequest',
-            data = {
-                from: `x:${start4326Center.lon} y:${start4326Center.lat}`,
-                to: `x:${end4326Center.lon} y:${end4326Center.lat}`,
-                returnJSON: true,
-                returnGeometries: true,
-                returnInstructions: false,
-                timeout: 60000,
-                type: 'HISTORIC_TIME',
-                nPaths: 6,
-                clientVersion: '4.0.0',
-                vehType: 'PRIVATE',
-                options: 'AVOID_TOLL_ROADS:f,AVOID_PRIMARIES:f,AVOID_DANGEROUS_TURNS:f,AVOID_FERRIES:f,ALLOW_UTURNS:t'
-            },
-            returnRoutes = [];
-        let jsonData;
-        try {
-            jsonData = await $.ajax({
-                dataType: 'JSON',
-                cache: false,
-                url,
-                data,
-                traditional: true,
-                dataFilter: retData => retData.replace(/NaN/g, '0')
-            }).fail((response, textStatus, errorThrown) => {
-                logWarning(`Route request failed ${(textStatus !== null ? `with ${textStatus}` : '')}\r\n${errorThrown}!`);
-            });
-        }
-        catch (error) {
-            logWarning(JSON.stringify(error));
-            jsonData = { error };
-        }
-        if (!jsonData) {
-            logWarning('No data returned.');
-        }
-        else if (jsonData.error !== undefined) {
-            logWarning(((typeof jsonData.error === 'object') ? $.parseJSON(jsonData.error) : jsonData.error.replace('|', '\r\n')));
-        }
-        else {
-            let routes = (jsonData.coords !== undefined) ? [jsonData] : [];
-            if (jsonData.alternatives !== undefined)
-                routes = routes.concat(jsonData.alternatives);
-            routes.forEach(route => {
-                const fullRouteSegIds = route.response.results.map(result => result.path.segmentId),
-                    fullRouteSegs = W.model.segments.getByIds(fullRouteSegIds);
-                if (nameContinuityCheck(fullRouteSegs) && rtgContinuityCheck(fullRouteSegs)) {
-                    const routeDistance = route.response.results.map(result => result.length).slice(1, -1).reduce((a, b) => a + b);
-                    if (routeDistance < maxLength)
-                        returnRoutes.push(route.response.results.map(result => result.path.segmentId));
-                }
-            });
-        }
-        resolve(returnRoutes);
-    });
+async function findLiveMapRoutes(startSeg, endSeg, maxLength) {
+    const start900913center = startSeg.getCenter(),
+        end900913center = endSeg.getCenter(),
+        start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
+        end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
+        url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
+            ? '/RoutingManager/routingRequest'
+            : W.model.countries.getObjectById(106)
+                ? '/il-RoutingManager/routingRequest'
+                : '/row-RoutingManager/routingRequest',
+        data = {
+            from: `x:${start4326Center.lon} y:${start4326Center.lat}`,
+            to: `x:${end4326Center.lon} y:${end4326Center.lat}`,
+            returnJSON: true,
+            returnGeometries: true,
+            returnInstructions: false,
+            timeout: 60000,
+            type: 'HISTORIC_TIME',
+            nPaths: 6,
+            clientVersion: '4.0.0',
+            vehType: 'PRIVATE',
+            options: 'AVOID_TOLL_ROADS:f,AVOID_PRIMARIES:f,AVOID_DANGEROUS_TURNS:f,AVOID_FERRIES:f,ALLOW_UTURNS:t'
+        },
+        returnRoutes = [];
+    let jsonData;
+    try {
+        jsonData = await $.ajax({
+            dataType: 'JSON',
+            cache: false,
+            url,
+            data,
+            traditional: true,
+            dataFilter: retData => retData.replace(/NaN/g, '0')
+        }).fail((response, textStatus, errorThrown) => {
+            logWarning(`Route request failed ${(textStatus !== null ? `with ${textStatus}` : '')}\r\n${errorThrown}!`);
+        });
+    }
+    catch (error) {
+        logWarning(JSON.stringify(error));
+        jsonData = { error };
+    }
+    if (!jsonData) {
+        logWarning('No data returned.');
+    }
+    else if (jsonData.error !== undefined) {
+        logWarning(((typeof jsonData.error === 'object') ? $.parseJSON(jsonData.error) : jsonData.error.replace('|', '\r\n')));
+    }
+    else {
+        let routes = (jsonData.coords !== undefined) ? [jsonData] : [];
+        if (jsonData.alternatives !== undefined)
+            routes = routes.concat(jsonData.alternatives);
+        routes.forEach(route => {
+            const fullRouteSegIds = route.response.results.map(result => result.path.segmentId),
+                fullRouteSegs = W.model.segments.getByIds(fullRouteSegIds);
+            if (nameContinuityCheck(fullRouteSegs) && rtgContinuityCheck(fullRouteSegs)) {
+                const routeDistance = route.response.results.map(result => result.length).slice(1, -1).reduce((a, b) => a + b);
+                if (routeDistance < maxLength)
+                    returnRoutes.push(route.response.results.map(result => result.path.segmentId));
+            }
+        });
+    }
+    return new Promise(resolve => resolve(returnRoutes));
 }
 
 function findDirectRoute(obj = {}) {
@@ -261,7 +299,10 @@ function findDirectRoute(obj = {}) {
             const rObj = { addPossibleRouteSegments: [] };
             for (let i = 0; i < nextSegIds.length; i++) {
                 const nextSeg = W.model.segments.getObjectById(nextSegIds[i]);
-                if (curSeg.isTurnAllowed(nextSeg, nextNode) && nameContinuityCheck([startSeg, nextSeg])) {
+                if (curSeg.isTurnAllowed(nextSeg, nextNode)
+                    && nameContinuityCheck([curSeg, nextSeg])
+                    && (nameContinuityCheck([startSeg, nextSeg]) || nameContinuityCheck([endSeg, nextSeg]))
+                ) {
                     if (!processedSegs.some(o => (o.fromSegId === curSeg.attributes.id) && (o.toSegId === nextSegIds[i]))) {
                         rObj.addPossibleRouteSegments.push({ nextSegStartNode: nextNode, nextSeg });
                         break;
@@ -378,6 +419,10 @@ async function doCheckBDP(viaLM = false) {
         WazeWrap.Alerts.info(SCRIPT_NAME, 'One bracketing segment is a minor highway while the other is not. BDP only applies when bracketing segments are in the same road type group.');
         return;
     }
+    if (!nameContinuityCheck([startSeg, endSeg])) {
+        WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
+        return;
+    }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
     if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 4))
         || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 3))) {
@@ -385,7 +430,34 @@ async function doCheckBDP(viaLM = false) {
         _restoreMapCenter = W.map.getCenter();
         await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
     }
-    if (segmentSelection.segments.length > 2) {
+    if (segmentSelection.segments.length === 2) {
+        if (viaLM) {
+            directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
+        }
+        else {
+            const startSegDirection = startSeg.getDirection(),
+                endSegDirection = endSeg.getDirection();
+            const startNodeObjs = [],
+                endNodeObjs = [];
+            if ((startSegDirection !== 2) && startSeg.getToNode())
+                startNodeObjs.push(startSeg.getToNode());
+            if ((startSegDirection !== 1) && startSeg.getFromNode())
+                startNodeObjs.push(startSeg.getFromNode());
+            if ((endSegDirection !== 2) && endSeg.getFromNode())
+                endNodeObjs.push(endSeg.getFromNode());
+            if ((endSegDirection !== 1) && endSeg.getToNode())
+                endNodeObjs.push(endSeg.getToNode());
+            for (let i = 0; i < startNodeObjs.length; i++) {
+                const startNode = startNodeObjs[i];
+                directRoutes = findDirectRoute({
+                    maxLength, startSeg, startNode, endSeg, endNodeIds: endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id)
+                });
+                if (directRoutes.length > 0)
+                    break;
+            }
+        }
+    }
+    else {
         const routeSegIds = W.selectionManager.getSegmentSelection().getSelectedSegments()
                 .map(segment => segment.attributes.id)
                 .filter(segId => (segId !== endSeg.attributes.id) && (segId !== startSeg.attributes.id)),
@@ -427,38 +499,6 @@ async function doCheckBDP(viaLM = false) {
                 const startNode = startNodeObjs[i];
                 directRoutes = findDirectRoute({
                     maxLength, startSeg, startNode, endSeg, endNodeIds: [endNodeObj.attributes.id]
-                });
-                if (directRoutes.length > 0)
-                    break;
-            }
-        }
-    }
-    else {
-        if (!nameContinuityCheck([startSeg, endSeg])) {
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
-            doZoom(true, _restoreZoomLevel, _restoreMapCenter);
-            return;
-        }
-        if (viaLM) {
-            directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
-        }
-        else {
-            const startSegDirection = startSeg.getDirection(),
-                endSegDirection = endSeg.getDirection();
-            const startNodeObjs = [],
-                endNodeObjs = [];
-            if ((startSegDirection !== 2) && startSeg.getToNode())
-                startNodeObjs.push(startSeg.getToNode());
-            if ((startSegDirection !== 1) && startSeg.getFromNode())
-                startNodeObjs.push(startSeg.getFromNode());
-            if ((endSegDirection !== 2) && endSeg.getFromNode())
-                endNodeObjs.push(endSeg.getFromNode());
-            if ((endSegDirection !== 1) && endSeg.getToNode())
-                endNodeObjs.push(endSeg.getToNode());
-            for (let i = 0; i < startNodeObjs.length; i++) {
-                const startNode = startNodeObjs[i];
-                directRoutes = findDirectRoute({
-                    maxLength, startSeg, startNode, endSeg, endNodeIds: endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id)
                 });
                 if (directRoutes.length > 0)
                     break;
