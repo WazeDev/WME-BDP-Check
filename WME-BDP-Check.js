@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.11.19.01
+// @version     2019.11.21.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -119,9 +119,9 @@ function getMidpoint(startSeg, endSeg) {
 async function doZoom(restore = false, zoom = -1, coordObj = {}) {
     if ((zoom === -1) || (Object.entries(coordObj).length === 0))
         return Promise.resolve();
-    W.map.setCenter(coordObj);
-    if (restore || (W.map.getZoom() > zoom))
-        W.map.zoomTo(zoom);
+    W.map.getOLMap().setCenter(coordObj);
+    if (restore || (W.map.getOLMap().getZoom() > zoom))
+        W.map.getOLMap().zoomTo(zoom);
     if (restore) {
         _restoreZoomLevel = undefined;
         _restoreMapCenter = undefined;
@@ -424,10 +424,10 @@ async function doCheckBDP(viaLM = false) {
         return;
     }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
-    if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 4))
-        || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 3))) {
-        _restoreZoomLevel = W.map.getZoom();
-        _restoreMapCenter = W.map.getCenter();
+    if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
+        || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
+        _restoreZoomLevel = W.map.getOLMap().getZoom();
+        _restoreMapCenter = W.map.getOLMap().getCenter();
         await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
     }
     if (segmentSelection.segments.length === 2) {
