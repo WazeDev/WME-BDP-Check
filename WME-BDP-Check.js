@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.12.06.01
+// @version     2019.12.06.02
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -536,22 +536,26 @@ async function doCheckBDP(viaLM = false) {
 
 function insertCheckBDPButton(evt) {
     const $wmeButton = $('#WME-BDPC-WME'),
-        $lmButton = $('#WME-BDPC-LM');
+        $lmButton = $('#WME-BDPC-LM'),
+        $buttonsDiv = $('#WME-BDPC-BUTTONS-DIV');
     if (!evt || !evt.object || !evt.object._selectedFeatures || (evt.object._selectedFeatures.length < 2)) {
-        if ($wmeButton.length > 0)
-            $wmeButton.remove();
-        if ($lmButton.length > 0)
-            $lmButton.remove();
+        if ($buttonsDiv.length > 0)
+            $buttonsDiv.remove();
         return;
     }
+
     if (evt.object._selectedFeatures.filter(feature => feature.model.type === 'segment').length > 1) {
         let htmlOut = '';
+        if ($buttonsDiv.length === 0)
+            htmlOut += '<div id="WME-BDPC-BUTTONS-DIV" style="margin:0 0 10px 10px;">';
         if ($wmeButton.length === 0)
             htmlOut += '<button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via WME.">BDP Check (WME)</button>';
         if ($lmButton.length === 0)
             htmlOut += '<button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via LM.">BDP Check (LM)</button>';
+        if ($buttonsDiv.length === 0)
+            htmlOut += '</div>';
         if (htmlOut !== '')
-            $('.edit-restrictions').before(htmlOut);
+            $('.tabs-container').before(htmlOut);
         return;
     }
     if ($wmeButton.length > 0)
@@ -575,9 +579,11 @@ async function init() {
     W.selectionManager.selectionMediator.on('map:selection:deselectKey', () => { _pathEndSegId = undefined; });
     W.selectionManager.selectionMediator.on('map:selection:featureBoxSelection', () => { _pathEndSegId = undefined; });
     if (W.selectionManager.getSegmentSelection().segments.length > 1) {
-        $('.edit-restrictions').before(
-            '<button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments, via WME.">BDP Check (WME)</button>',
-            '<button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check if there are possible BDP routes between two selected segments, via LM.">BDP Check (LM)</button>'
+        $('.tabs-container').before(
+            '   <div id="WME-BDPC-BUTTONS-DIV" style="margin:0 0 10px 10px;">'
+            + '     <button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via WME.">BDP Check (WME)</button>'
+            + '     <button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via LM." >BDP Check (LM)</button>'
+            + ' </div>'
         );
     }
     $('#sidebar').on('click', '#WME-BDPC-WME', e => {
