@@ -1,6 +1,6 @@
 /* eslint-disable no-nested-ternary */
 // ==UserScript==
-// @name        WME BDP Check (beta)
+// @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
 // @version     2019.12.06.01
 // @description Check for possible BDP routes between two selected segments.
@@ -14,7 +14,7 @@
 /* global localStorage, window, $, performance, GM_info, W, WazeWrap */
 
 const ALERT_UPDATE = true,
-    DEBUG = true,
+    DEBUG = false,
     LOAD_BEGIN_TIME = performance.now(),
     // SCRIPT_AUTHOR = GM_info.script.author,
     SCRIPT_FORUM_URL = 'https://www.waze.com/forum/viewtopic.php?f=819&t=294789',
