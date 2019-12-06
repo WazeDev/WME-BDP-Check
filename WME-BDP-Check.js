@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.11.21.01
+// @version     2019.12.06.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -17,8 +17,8 @@ const ALERT_UPDATE = true,
     DEBUG = true,
     LOAD_BEGIN_TIME = performance.now(),
     // SCRIPT_AUTHOR = GM_info.script.author,
-    SCRIPT_FORUM_URL = '',
-    SCRIPT_GF_URL = '',
+    SCRIPT_FORUM_URL = 'https://www.waze.com/forum/viewtopic.php?f=819&t=294789',
+    SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
     SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
     SCRIPT_VERSION = GM_info.script.version,
     SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Initial release.'],
