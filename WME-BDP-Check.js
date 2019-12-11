@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.12.06.02
+// @version     2019.12.11.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -21,7 +21,8 @@ const ALERT_UPDATE = true,
     SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
     SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
     SCRIPT_VERSION = GM_info.script.version,
-    SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Initial release.'],
+    SCRIPT_VERSION_CHANGES = ['<b>NEW:</b> Check detour selection for unroutable segment types.',
+        '<b>BUGFIX:</b> Zoom levels 1-3 do not contain LS or PS segments.'],
     SETTINGS_STORE_NAME = 'WMEBDPC',
     sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
     _timeouts = { bootstrap: undefined, saveSettingsToStorage: undefined };
@@ -120,7 +121,7 @@ async function doZoom(restore = false, zoom = -1, coordObj = {}) {
     if ((zoom === -1) || (Object.entries(coordObj).length === 0))
         return Promise.resolve();
     W.map.getOLMap().setCenter(coordObj);
-    if (restore || (W.map.getOLMap().getZoom() > zoom))
+    if (W.map.getOLMap().getZoom() !== zoom)
         W.map.getOLMap().zoomTo(zoom);
     if (restore) {
         _restoreZoomLevel = undefined;
@@ -424,13 +425,13 @@ async function doCheckBDP(viaLM = false) {
         return;
     }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
-    if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
-        || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
-        _restoreZoomLevel = W.map.getOLMap().getZoom();
-        _restoreMapCenter = W.map.getOLMap().getCenter();
-        await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
-    }
     if (segmentSelection.segments.length === 2) {
+        if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
+            || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
+            _restoreZoomLevel = W.map.getOLMap().getZoom();
+            _restoreMapCenter = W.map.getOLMap().getCenter();
+            await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
+        }
         if (viaLM) {
             directRoutes = directRoutes.concat(await findLiveMapRoutes(startSeg, endSeg, maxLength));
         }
@@ -466,7 +467,20 @@ async function doCheckBDP(viaLM = false) {
             startNodeObjs = [],
             lastDetourSegId = routeSegIds.filter(el => endNodeObj.attributes.segIDs.includes(el)),
             lastDetourSeg = W.model.segments.getObjectById(lastDetourSegId),
-            detourSegs = segmentSelection.segments.slice(1, -1);
+            detourSegs = segmentSelection.segments.slice(1, -1),
+            detourSegTypes = [...new Set(detourSegs.map(segment => segment.attributes.roadType))];
+        if ([9, 10, 16, 18, 19, 22].some(type => detourSegTypes.indexOf(type) > -1)) {
+            WazeWrap.Alerts.info(SCRIPT_NAME, 'Your selection contains one more more segments with an unrouteable road type. The selected route is not a valid route.');
+            return;
+        }
+        if (![1, 2].some(type => detourSegTypes.indexOf(type) > -1)) {
+            if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
+                || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
+                _restoreZoomLevel = W.map.getOLMap().getZoom();
+                _restoreMapCenter = W.map.getOLMap().getCenter();
+                await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
+            }
+        }
         if ((startSegDirection !== 2) && startSeg.getToNode())
             startNodeObjs.push(startSeg.getToNode());
         if ((startSegDirection !== 1) && startSeg.getFromNode())
