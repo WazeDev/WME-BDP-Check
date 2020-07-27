@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2020.06.16.01
+// @version     2020.07.27.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -22,6 +22,7 @@ const ALERT_UPDATE = true,
     SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
     SCRIPT_VERSION = GM_info.script.version,
     SCRIPT_VERSION_CHANGES = ['<b>NEW:</b> Check detour selection for unroutable segment types.',
+        '<b>CHANGE:</b> WME map object references.',
         '<b>BUGFIX:</b> Zoom levels 1-3 do not contain LS or PS segments.',
         '<b>BUGFIX:</b> Better handling of multiple segments in detour route connected to same final node.'],
     SETTINGS_STORE_NAME = 'WMEBDPC',
@@ -141,8 +142,8 @@ function getMidpoint(startSeg, endSeg) {
 async function doZoom(restore = false, zoom = -1, coordObj = {}) {
     if ((zoom === -1) || (Object.entries(coordObj).length === 0))
         return Promise.resolve();
-    W.map.getOLMap().setCenter(coordObj);
-    if (W.map.getOLMap().getZoom() !== zoom)
+    W.map.setCenter(coordObj);
+    if (W.map.getZoom() !== zoom)
         W.map.getOLMap().zoomTo(zoom);
     if (restore) {
         _restoreZoomLevel = undefined;
@@ -451,10 +452,10 @@ async function doCheckBDP(viaLM = false) {
     }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
     if (segmentSelection.segments.length === 2) {
-        if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
-            || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
-            _restoreZoomLevel = W.map.getOLMap().getZoom();
-            _restoreMapCenter = W.map.getOLMap().getCenter();
+        if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 4))
+            || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 3))) {
+            _restoreZoomLevel = W.map.getZoom();
+            _restoreMapCenter = W.map.getCenter();
             await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
         }
         if (viaLM) {
@@ -512,10 +513,10 @@ async function doCheckBDP(viaLM = false) {
             return;
         }
         if (![1].some(type => detourSegTypes.indexOf(type) > -1)) {
-            if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
-                || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
-                _restoreZoomLevel = W.map.getOLMap().getZoom();
-                _restoreMapCenter = W.map.getOLMap().getCenter();
+            if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 4))
+                || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 3))) {
+                _restoreZoomLevel = W.map.getZoom();
+                _restoreMapCenter = W.map.getCenter();
                 await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
             }
         }
