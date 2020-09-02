@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2020.07.27.01
+// @version     2020.09.02.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -21,10 +21,7 @@ const ALERT_UPDATE = true,
     SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
     SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
     SCRIPT_VERSION = GM_info.script.version,
-    SCRIPT_VERSION_CHANGES = ['<b>NEW:</b> Check detour selection for unroutable segment types.',
-        '<b>CHANGE:</b> WME map object references.',
-        '<b>BUGFIX:</b> Zoom levels 1-3 do not contain LS or PS segments.',
-        '<b>BUGFIX:</b> Better handling of multiple segments in detour route connected to same final node.'],
+    SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Routes must be selected by clicking first bracketing segment first and second bracketing segment last.'],
     SETTINGS_STORE_NAME = 'WMEBDPC',
     sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
     _timeouts = { bootstrap: undefined, saveSettingsToStorage: undefined },
@@ -406,8 +403,14 @@ async function doCheckBDP(viaLM = false) {
         [startSeg, endSeg] = segmentSelection.segments;
     }
     else if (_pathEndSegId !== undefined) {
-        startSeg = W.model.segments.getObjectById(segmentSelection.segments[segmentSelection.segments.length - 1].attributes.id);
-        endSeg = W.model.segments.getObjectById(_pathEndSegId);
+        if (segmentSelection.segments[0].attributes.id === _pathEndSegId) {
+            [endSeg] = segmentSelection.segments;
+            startSeg = segmentSelection.segments[segmentSelection.segments.length - 1];
+        }
+        else {
+            [startSeg] = segmentSelection.segments;
+            endSeg = segmentSelection.segments[segmentSelection.segments.length - 1];
+        }
         const routeNodeIds = segmentSelection.segments.slice(1, -1).flatMap(segment => [segment.attributes.toNodeID, segment.attributes.fromNodeID]);
         if (routeNodeIds.some(nodeId => endSeg.attributes.fromNodeID === nodeId))
             endSeg.attributes.bdpcheck = { routeFarEndNodeId: endSeg.attributes.toNodeID };
@@ -415,26 +418,13 @@ async function doCheckBDP(viaLM = false) {
             endSeg.attributes.bdpcheck = { routeFarEndNodeId: endSeg.attributes.fromNodeID };
     }
     else {
-        const tempNodeIds = [];
-        segmentSelection.segments.forEach(segment => {
-            let idx = tempNodeIds.map(tempNodeId => tempNodeId.nodeId).indexOf(segment.attributes.fromNodeID);
-            if (idx > -1)
-                tempNodeIds.splice(idx, 1);
-            else
-                tempNodeIds.push({ nodeId: segment.attributes.fromNodeID, segId: segment.attributes.id });
-            idx = tempNodeIds.map(tempNodeId => tempNodeId.nodeId).indexOf(segment.attributes.toNodeID);
-            if (idx > -1)
-                tempNodeIds.splice(idx, 1);
-            else
-                tempNodeIds.push({ nodeId: segment.attributes.toNodeID, segId: segment.attributes.id });
-        });
-        if (tempNodeIds.length !== 2) {
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'Error finding which two segments were the bracketing segments.');
-            return;
-        }
-        startSeg = W.model.segments.getObjectById(tempNodeIds[0].segId);
-        endSeg = W.model.segments.getObjectById(tempNodeIds[1].segId);
-        endSeg.attributes.bdpcheck = { routeFarEndNodeId: tempNodeIds[1].nodeId };
+        [startSeg] = segmentSelection.segments;
+        endSeg = segmentSelection.segments[segmentSelection.segments.length - 1];
+        const routeNodeIds = segmentSelection.segments.slice(1, -1).flatMap(segment => [segment.attributes.toNodeID, segment.attributes.fromNodeID]);
+        if (routeNodeIds.some(nodeId => endSeg.attributes.fromNodeID === nodeId))
+            endSeg.attributes.bdpcheck = { routeFarEndNodeId: endSeg.attributes.toNodeID };
+        else
+            endSeg.attributes.bdpcheck = { routeFarEndNodeId: endSeg.attributes.fromNodeID };
     }
     if ((startSeg.attributes.roadType < 3) || (startSeg.attributes.roadType === 4) || (startSeg.attributes.roadType === 5) || (startSeg.attributes.roadType > 7)
         || (endSeg.attributes.roadType < 3) || (endSeg.attributes.roadType === 4) || (endSeg.attributes.roadType === 5) || (endSeg.attributes.roadType > 7)
