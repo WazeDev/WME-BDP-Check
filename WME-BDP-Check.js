@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
-// @version     2019.12.06.02
+// @version     2021.03.27.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -11,7 +11,12 @@
 // @license     GPLv3
 // ==/UserScript==
 
-/* global localStorage, window, $, performance, GM_info, W, WazeWrap */
+/* JSHint Directives */
+/* jshint esversion: 8 */
+/* globals $ */
+/* globals GM_info */
+/* globals W: true */
+/* globals WazeWrap: true */
 
 const ALERT_UPDATE = true,
     DEBUG = false,
@@ -170,8 +175,7 @@ function nameContinuityCheck(segs = []) {
             }
         }
     }
-    if (((segs.length === 2) && (streetNames.length === 0))
-        || ((segs.length > 2) && (bs1StreetNames.length === 0)))
+    if (((segs.length === 2) && (streetNames.length === 0)) || ((segs.length > 2) && (bs1StreetNames.length === 0)))
         return false;
     if (segs.length === 2) {
         if (segs[1].attributes.primaryStreetID) {
@@ -229,10 +233,8 @@ async function findLiveMapRoutes(startSeg, endSeg, maxLength) {
         end900913center = endSeg.getCenter(),
         start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
         end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
-        url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
-            ? '/RoutingManager/routingRequest'
-            : W.model.countries.getObjectById(106)
-                ? '/il-RoutingManager/routingRequest'
+        url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182)) ? '/RoutingManager/routingRequest'
+            : W.model.countries.getObjectById(106) ? '/il-RoutingManager/routingRequest'
                 : '/row-RoutingManager/routingRequest',
         data = {
             from: `x:${start4326Center.lon} y:${start4326Center.lat}`,
@@ -299,9 +301,7 @@ function findDirectRoute(obj = {}) {
             const rObj = { addPossibleRouteSegments: [] };
             for (let i = 0; i < nextSegIds.length; i++) {
                 const nextSeg = W.model.segments.getObjectById(nextSegIds[i]);
-                if (curSeg.isTurnAllowed(nextSeg, nextNode)
-                    && nameContinuityCheck([curSeg, nextSeg])
-                    && (nameContinuityCheck([startSeg, nextSeg]) || nameContinuityCheck([endSeg, nextSeg]))
+                if (curSeg.isTurnAllowed(nextSeg, nextNode) && nameContinuityCheck([curSeg, nextSeg]) && (nameContinuityCheck([startSeg, nextSeg]) || nameContinuityCheck([endSeg, nextSeg]))
                 ) {
                     if (!processedSegs.some(o => (o.fromSegId === curSeg.attributes.id) && (o.toSegId === nextSegIds[i]))) {
                         rObj.addPossibleRouteSegments.push({ nextSegStartNode: nextNode, nextSeg });
@@ -370,9 +370,7 @@ async function doCheckBDP(viaLM = false) {
         return;
     }
     if (segmentSelection.multipleConnectedComponents && ((segmentSelection.segments.length > 2) || (numSelectedFeatureSegments > 2))) {
-        WazeWrap.Alerts.error(SCRIPT_NAME,
-            'If you select more than 2 segments, the selection of segments must be continuous.<br><br>'
-            + 'Either select just the two bracketing segments or an entire detour route with bracketing segments.');
+        WazeWrap.Alerts.error(SCRIPT_NAME, 'If you select more than 2 segments, the selection of segments must be continuous.<br><br>Either select just the two bracketing segments or an entire detour route with bracketing segments.');
         return;
     }
     if (segmentSelection.segments.length === 2) {
@@ -395,6 +393,7 @@ async function doCheckBDP(viaLM = false) {
                 tempNodeIds.splice(idx, 1);
             else
                 tempNodeIds.push({ nodeId: segment.attributes.fromNodeID, segId: segment.attributes.id });
+
             idx = tempNodeIds.map(tempNodeId => tempNodeId.nodeId).indexOf(segment.attributes.toNodeID);
             if (idx > -1)
                 tempNodeIds.splice(idx, 1);
@@ -409,8 +408,7 @@ async function doCheckBDP(viaLM = false) {
         endSeg = W.model.segments.getObjectById(tempNodeIds[1].segId);
         endSeg.attributes.bdpcheck = { routeFarEndNodeId: tempNodeIds[1].nodeId };
     }
-    if ((startSeg.attributes.roadType < 3) || (startSeg.attributes.roadType === 4) || (startSeg.attributes.roadType === 5) || (startSeg.attributes.roadType > 7)
-        || (endSeg.attributes.roadType < 3) || (endSeg.attributes.roadType === 4) || (endSeg.attributes.roadType === 5) || (endSeg.attributes.roadType > 7)
+    if ((startSeg.attributes.roadType < 3) || (startSeg.attributes.roadType === 4) || (startSeg.attributes.roadType === 5) || (startSeg.attributes.roadType > 7) || (endSeg.attributes.roadType < 3) || (endSeg.attributes.roadType === 4) || (endSeg.attributes.roadType === 5) || (endSeg.attributes.roadType > 7)
     ) {
         WazeWrap.Alerts.info(SCRIPT_NAME, 'At least one of the bracketing selected segments is not in the correct road type group for BDP.');
         return;
@@ -424,8 +422,7 @@ async function doCheckBDP(viaLM = false) {
         return;
     }
     const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
-    if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4))
-        || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
+    if (((startSeg.attributes.roadType === 7) && (W.map.getOLMap().getZoom() > 4)) || ((startSeg.attributes.roadType !== 7) && (W.map.getOLMap().getZoom() > 3))) {
         _restoreZoomLevel = W.map.getOLMap().getZoom();
         _restoreMapCenter = W.map.getOLMap().getCenter();
         await doZoom(false, (startSeg.attributes.roadType === 7) ? 4 : 3, getMidpoint(startSeg, endSeg));
@@ -521,15 +518,11 @@ async function doCheckBDP(viaLM = false) {
             () => { doZoom(true, _restoreZoomLevel, _restoreMapCenter); }, 'Yes', 'No');
     }
     else if (segmentSelection.segments.length === 2) {
-        WazeWrap.Alerts.info(SCRIPT_NAME,
-            'No direct routes found between the two selected segments. A BDP penalty <b>will not</b> be applied to any routes.'
-                + '<br><b>Note:</b> This could also be caused by the distance between the two selected segments is longer than than the allowed distance for detours.');
+        WazeWrap.Alerts.info(SCRIPT_NAME, 'No direct routes found between the two selected segments. A BDP penalty <b>will not</b> be applied to any routes.<br><b>Note:</b> This could also be caused by the distance between the two selected segments is longer than than the allowed distance for detours.');
         doZoom(true, _restoreZoomLevel, _restoreMapCenter);
     }
     else {
-        WazeWrap.Alerts.info(SCRIPT_NAME,
-            'No direct routes found between the possible detour bracketing segments. A BDP penalty <b>will not</b> be applied to the selected route.'
-                + '<br><b>Note:</b> This could also be because any possible direct routes are very long, which would take longer to travel than taking the selected route (even with penalty).');
+        WazeWrap.Alerts.info(SCRIPT_NAME, 'No direct routes found between the possible detour bracketing segments. A BDP penalty <b>will not</b> be applied to the selected route.<br><b>Note:</b> This could also be because any possible direct routes are very long, which would take longer to travel than taking the selected route (even with penalty).');
         doZoom(true, _restoreZoomLevel, _restoreMapCenter);
     }
 }
@@ -538,13 +531,14 @@ function insertCheckBDPButton(evt) {
     const $wmeButton = $('#WME-BDPC-WME'),
         $lmButton = $('#WME-BDPC-LM'),
         $buttonsDiv = $('#WME-BDPC-BUTTONS-DIV');
-    if (!evt || !evt.object || !evt.object._selectedFeatures || (evt.object._selectedFeatures.length < 2)) {
+
+   if(!evt || !evt.selected || (evt.selected.length < 2)){
         if ($buttonsDiv.length > 0)
             $buttonsDiv.remove();
         return;
     }
 
-    if (evt.object._selectedFeatures.filter(feature => feature.model.type === 'segment').length > 1) {
+    if (evt.selected.filter(feature => feature.model.type === 'segment').length > 1) {
         let htmlOut = '';
         if ($buttonsDiv.length === 0)
             htmlOut += '<div id="WME-BDPC-BUTTONS-DIV" style="margin:0 0 10px 10px;">';
@@ -580,10 +574,7 @@ async function init() {
     W.selectionManager.selectionMediator.on('map:selection:featureBoxSelection', () => { _pathEndSegId = undefined; });
     if (W.selectionManager.getSegmentSelection().segments.length > 1) {
         $('.tabs-container').before(
-            '   <div id="WME-BDPC-BUTTONS-DIV" style="margin:0 0 10px 10px;">'
-            + '     <button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via WME.">BDP Check (WME)</button>'
-            + '     <button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via LM." >BDP Check (LM)</button>'
-            + ' </div>'
+            '   <div id="WME-BDPC-BUTTONS-DIV" style="margin:0 0 10px 10px;">' + '     <button id="WME-BDPC-WME" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via WME.">BDP Check (WME)</button>' + '     <button id="WME-BDPC-LM" class="waze-btn waze-btn-small waze-btn-white" title="Check BDP of selected segments, via LM." >BDP Check (LM)</button>' + ' </div>'
         );
     }
     $('#sidebar').on('click', '#WME-BDPC-WME', e => {
