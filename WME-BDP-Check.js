@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2020.09.02.01
+// @version     2021.07.28.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -21,7 +21,11 @@ const ALERT_UPDATE = true,
     SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
     SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
     SCRIPT_VERSION = GM_info.script.version,
-    SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Routes must be selected by clicking first bracketing segment first and second bracketing segment last.'],
+    SCRIPT_VERSION_CHANGES = ['<b>NEW:</b> Check detour selection for unroutable segment types.',
+        '<b>CHANGE:</b> WME map object references.',
+        '<b>CHANGE:</b> Routes must be selected by clicking first bracketing segment first and second bracketing segment last.',
+        '<b>BUGFIX:</b> Zoom levels 1-3 do not contain LS or PS segments.',
+        '<b>BUGFIX:</b> Better handling of multiple segments in detour route connected to same final node.'],
     SETTINGS_STORE_NAME = 'WMEBDPC',
     sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
     _timeouts = { bootstrap: undefined, saveSettingsToStorage: undefined },
