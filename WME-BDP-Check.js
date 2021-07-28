@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
-// @version     2021.07.28.01
+// @version     2021.07.28.02
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
