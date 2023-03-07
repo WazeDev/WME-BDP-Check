@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2022.08.26.01
+// @version     2023.03.07.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
@@ -21,12 +21,12 @@ const ALERT_UPDATE = true,
     SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
     SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
     SCRIPT_VERSION = GM_info.script.version,
-    SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> Updated to work with latest WME.',
-        '<b>BUGFIX:</b> Route via LiveMap not returning in some instances.'
+    SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> New bootstrap routine.',
+        '<b>CHANGE:</b> Updated code to use optional chaining.'
     ],
     SETTINGS_STORE_NAME = 'WMEBDPC',
     sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
-    _timeouts = { bootstrap: undefined, saveSettingsToStorage: undefined },
+    _timeouts = { saveSettingsToStorage: undefined },
     _editPanelObserver = new MutationObserver(mutations => {
         if (W.selectionManager.getSegmentSelection().segments.length === 0)
             return;
@@ -55,7 +55,7 @@ let _settings = {},
     _restoreMapCenter;
 
 function log(message) { console.log('WME-BDPC:', message); }
-function logError(message) { console.error('WME-BDPC:', message); }
+// function logError(message) { console.error('WME-BDPC:', message); }
 function logWarning(message) { console.warn('WME-BDPC:', message); }
 function logDebug(message) {
     if (DEBUG)
@@ -70,7 +70,7 @@ async function loadSettingsFromStorage() {
         loadedSettings = $.parseJSON(localStorage.getItem(SETTINGS_STORE_NAME)),
         serverSettings = await WazeWrap.Remote.RetrieveSettings(SETTINGS_STORE_NAME);
     _settings = $.extend({}, defaultSettings, loadedSettings);
-    if (serverSettings && (serverSettings.lastSaved > _settings.lastSaved))
+    if (serverSettings?.lastSaved > _settings.lastSaved)
         $.extend(_settings, serverSettings);
     _timeouts.saveSettingsToStorage = window.setTimeout(saveSettingsToStorage, 5000);
     return Promise.resolve();
@@ -88,7 +88,7 @@ function saveSettingsToStorage() {
 }
 
 function showScriptInfoAlert() {
-    if (ALERT_UPDATE && SCRIPT_VERSION !== _settings.lastVersion) {
+    if (ALERT_UPDATE && (SCRIPT_VERSION !== _settings.lastVersion)) {
         let releaseNotes = '';
         releaseNotes += '<p>What\'s new:</p>';
         if (SCRIPT_VERSION_CHANGES.length > 0) {
@@ -106,7 +106,7 @@ function showScriptInfoAlert() {
 
 function checkTimeout(obj) {
     if (obj.toIndex) {
-        if (_timeouts[obj.timeout] && (_timeouts[obj.timeout][obj.toIndex] !== undefined)) {
+        if (_timeouts[obj.timeout]?.[obj.toIndex] !== undefined) {
             window.clearTimeout(_timeouts[obj.timeout][obj.toIndex]);
             _timeouts[obj.timeout][obj.toIndex] = undefined;
         }
@@ -176,7 +176,7 @@ function nameContinuityCheck([...segs] = []) {
     let street;
     if (segs[0].attributes.primaryStreetID) {
         street = W.model.streets.getObjectById(segs[0].attributes.primaryStreetID);
-        if (street && street.name && (street.name.length > 0)) {
+        if (street?.name?.length > 0) {
             if (segs.length === 2)
                 streetNames.push(street.name);
             else
@@ -186,7 +186,7 @@ function nameContinuityCheck([...segs] = []) {
     if (segs[0].attributes.streetIDs.length > 0) {
         for (let i = 0; i < segs[0].attributes.streetIDs.length; i++) {
             street = W.model.streets.getObjectById(segs[0].attributes.streetIDs[i]);
-            if (street && street.name && (street.name.length > 0)) {
+            if (street?.name?.length > 0) {
                 if (segs.length === 2)
                     streetNames.push(street.name);
                 else
@@ -200,13 +200,13 @@ function nameContinuityCheck([...segs] = []) {
     if (segs.length === 2) {
         if (segs[1].attributes.primaryStreetID) {
             street = W.model.streets.getObjectById(segs[1].attributes.primaryStreetID);
-            if (street && street.name && streetNames.includes(street.name))
+            if (street?.name && streetNames.includes(street.name))
                 return true;
         }
         if (segs[1].attributes.streetIDs.length > 0) {
             for (let i = 0; i < segs[1].attributes.streetIDs.length; i++) {
                 street = W.model.streets.getObjectById(segs[1].attributes.streetIDs[i]);
-                if (street && street.name && streetNames.includes(street.name))
+                if (street?.name && streetNames.includes(street.name))
                     return true;
             }
         }
@@ -216,13 +216,13 @@ function nameContinuityCheck([...segs] = []) {
         const lastIdx = segs.length - 1;
         if (segs[lastIdx].attributes.primaryStreetID) {
             street = W.model.streets.getObjectById(segs[lastIdx].attributes.primaryStreetID);
-            if (street && street.name && (street.name.length > 0))
+            if (street?.name && (street.name.length > 0))
                 bs2StreetNames.push(street.name);
         }
         if (segs[lastIdx].attributes.streetIDs.length > 0) {
             for (let i = 0; i < segs[lastIdx].attributes.streetIDs.length; i++) {
                 street = W.model.streets.getObjectById(segs[lastIdx].attributes.streetIDs[i]);
-                if (street && street.name && (street.name.length > 0))
+                if (street?.name && (street.name.length > 0))
                     bs2StreetNames.push(street.name);
             }
         }
@@ -232,13 +232,13 @@ function nameContinuityCheck([...segs] = []) {
         return segs.every(el => {
             if (el.attributes.primaryStreetID) {
                 street = W.model.streets.getObjectById(el.attributes.primaryStreetID);
-                if (street && street.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
+                if (street?.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
                     return true;
             }
             if (el.attributes.streetIDs.length > 0) {
                 for (let i = 0; i < el.attributes.streetIDs.length; i++) {
                     street = W.model.streets.getObjectById(el.attributes.streetIDs[i]);
-                    if (street && street.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
+                    if (street?.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
                         return true;
                 }
             }
@@ -479,7 +479,7 @@ async function doCheckBDP(viaLM = false) {
             for (let i = 0; i < startNodeObjs.length; i++) {
                 const startNode = startNodeObjs[i];
                 directRoutes = findDirectRoute({
-                    maxLength, startSeg, startNode, endSeg, endNodeIds: endNodeObjs.map(nodeObj => nodeObj && nodeObj.attributes.id)
+                    maxLength, startSeg, startNode, endSeg, endNodeIds: endNodeObjs.map(nodeObj => nodeObj?.attributes.id)
                 });
                 if (directRoutes.length > 0)
                     break;
@@ -642,11 +642,11 @@ function insertCheckBDPButton(recreate = false) {
 }
 
 function pathSelected(evt) {
-    if (evt && evt.feature && evt.feature.model && (evt.feature.model.type === 'segment'))
+    if (evt?.feature?.model?.type === 'segment')
         _pathEndSegId = evt.feature.model.attributes.id;
 }
 
-async function init() {
+async function onWmeReady() {
     log('Initializing.');
     await loadSettingsFromStorage();
     _editPanelObserver.observe(document.querySelector('#edit-panel'), {
@@ -661,19 +661,25 @@ async function init() {
     log(`Fully initialized in ${Math.round(performance.now() - LOAD_BEGIN_TIME)} ms.`);
 }
 
-function bootstrap(tries) {
-    if (W && W.map && W.model && $ && WazeWrap.Ready) {
-        checkTimeout({ timeout: 'bootstrap' });
-        log('Bootstrapping.');
-        init();
-    }
-    else if (tries < 1000) {
-        logDebug(`Bootstrap failed. Retrying ${tries} of 1000`);
-        _timeouts.bootstrap = window.setTimeout(bootstrap, 200, ++tries);
+function onWmeInitialized() {
+    if (W.userscripts?.state?.isReady) {
+        logDebug('W is ready and already in "wme-ready" state. Proceeding with initialization.');
+        onWmeReady();
     }
     else {
-        logError('Bootstrap timed out waiting for WME to become ready.');
+        logDebug('W is ready, but state is not "wme-ready". Adding event listener.');
+        document.addEventListener('wme-ready', onWmeReady, { once: true });
     }
 }
 
-bootstrap(1);
+function bootstrap() {
+    if (!W) {
+        logDebug('W is not available. Adding event listener.');
+        document.addEventListener('wme-initialized', onWmeInitialized, { once: true });
+    }
+    else {
+        onWmeInitialized();
+    }
+}
+
+bootstrap();
