@@ -24,7 +24,9 @@
         SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
         SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
         SCRIPT_VERSION = GM_info.script.version,
-        SCRIPT_VERSION_CHANGES = ['<b>BUGFIX:</b> Script failed to load correctly in certain situations.',
+        SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> New bootstrap routine.',
+            '<b>CHANGE:</b> Updated code to use optional chaining.',
+            '<b>CHANGE:</b> Code structure with new linter options.',
             '<b>CHANGE:</b> Code cleanup.',
             '<b>CHANGE:</b> Utilize @match instead of @include in userscript headers.'
         ],
