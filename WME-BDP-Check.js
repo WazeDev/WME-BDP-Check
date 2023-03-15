@@ -26,7 +26,7 @@
         SCRIPT_VERSION = GM_info.script.version,
         SCRIPT_VERSION_CHANGES = ['<b>BUGFIX:</b> Script failed to load correctly in certain situations.',
             '<b>CHANGE:</b> Code cleanup.',
-            '<b>CHANGE:</b> Utilize @match instead of @include in userscript headers.''
+            '<b>CHANGE:</b> Utilize @match instead of @include in userscript headers.'
         ],
         SETTINGS_STORE_NAME = 'WMEBDPC',
         sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
