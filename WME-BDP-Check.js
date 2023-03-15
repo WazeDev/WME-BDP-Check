@@ -1,11 +1,11 @@
-/* eslint-disable no-nested-ternary */
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2023.03.07.01
+// @version     2023.03.15.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
-// @include     /^https:\/\/(www|beta)\.waze\.com\/(?!user\/)(.{2,6}\/)?editor\/?.*$/
+// @match       http*://*.waze.com/*editor*
+// @exclude     http*://*.waze.com/user/editor*
 // @require     https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @grant       none
 // @license     GPLv3
@@ -24,13 +24,13 @@
         SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
         SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
         SCRIPT_VERSION = GM_info.script.version,
-        SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> New bootstrap routine.',
-            '<b>CHANGE:</b> Updated code to use optional chaining.',
-            '<b>CHANGE:</b> Code structure with new linter options.'
+        SCRIPT_VERSION_CHANGES = ['<b>BUGFIX:</b> Script failed to load correctly in certain situations.',
+            '<b>CHANGE:</b> Code cleanup.',
+            '<b>CHANGE:</b> Utilize @match instead of @include in userscript headers.''
         ],
         SETTINGS_STORE_NAME = 'WMEBDPC',
         sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-        _timeouts = { saveSettingsToStorage: undefined },
+        _timeouts = { onWmeReady: undefined, saveSettingsToStorage: undefined },
         _editPanelObserver = new MutationObserver((mutations) => {
             if (W.selectionManager.getSegmentSelection().segments.length === 0)
                 return;
@@ -59,7 +59,7 @@
         _restoreMapCenter;
 
     function log(message) { console.log('WME-BDPC:', message); }
-    // function logError(message) { console.error('WME-BDPC:', message); }
+    function logError(message) { console.error('WME-BDPC:', message); }
     function logWarning(message) { console.warn('WME-BDPC:', message); }
     function logDebug(message) {
         if (DEBUG)
@@ -110,13 +110,13 @@
 
     function checkTimeout(obj) {
         if (obj.toIndex) {
-            if (_timeouts[obj.timeout]?.[obj.toIndex] !== undefined) {
+            if (_timeouts[obj.timeout]?.[obj.toIndex]) {
                 window.clearTimeout(_timeouts[obj.timeout][obj.toIndex]);
-                _timeouts[obj.timeout][obj.toIndex] = undefined;
+                delete (_timeouts[obj.timeout][obj.toIndex]);
             }
         }
         else {
-            if (_timeouts[obj.timeout] !== undefined)
+            if (_timeouts[obj.timeout])
                 window.clearTimeout(_timeouts[obj.timeout]);
             _timeouts[obj.timeout] = undefined;
         }
@@ -151,7 +151,7 @@
         if (W.map.getZoom() !== zoom)
             W.map.getOLMap().zoomTo(zoom);
         if (restore) {
-            _restoreZoomLevel = undefined;
+            _restoreZoomLevel = null;
             _restoreMapCenter = undefined;
         }
         else {
@@ -257,6 +257,7 @@
             end900913center = endSeg.getCenter(),
             start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
             end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
+            // eslint-disable-next-line no-nested-ternary
             url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
                 ? '/RoutingManager/routingRequest'
                 : W.model.countries.getObjectById(106)
@@ -276,7 +277,7 @@
                 options: 'AVOID_TOLL_ROADS:f,AVOID_PRIMARIES:f,AVOID_DANGEROUS_TURNS:f,AVOID_FERRIES:f,ALLOW_UTURNS:t'
             },
             returnRoutes = [];
-        let jsonData;
+        let jsonData = { error: false };
         try {
             jsonData = await $.ajax({
                 dataType: 'JSON',
@@ -286,7 +287,7 @@
                 traditional: true,
                 dataFilter: (retData) => retData.replace(/NaN/g, '0')
             }).fail((response, textStatus, errorThrown) => {
-                logWarning(`Route request failed ${(textStatus !== null ? `with ${textStatus}` : '')}\r\n${errorThrown}!`);
+                logWarning(`Route request failed ${(textStatus ? `with ${textStatus}` : '')}\r\n${errorThrown}!\r\nResponse: ${response}`);
             });
         }
         catch (error) {
@@ -296,12 +297,12 @@
         if (!jsonData) {
             logWarning('No data returned.');
         }
-        else if (jsonData.error !== undefined) {
+        else if (jsonData.error) {
             logWarning(((typeof jsonData.error === 'object') ? $.parseJSON(jsonData.error) : jsonData.error.replace('|', '\r\n')));
         }
         else {
-            let routes = (jsonData.coords !== undefined) ? [jsonData] : [];
-            if (jsonData.alternatives !== undefined)
+            let routes = jsonData.coords ? [jsonData] : [];
+            if (jsonData.alternatives)
                 routes = routes.concat(jsonData.alternatives);
             routes.forEach((route) => {
                 const fullRouteSegIds = route.response.results.map((result) => result.path.segmentId),
@@ -415,7 +416,7 @@
         if (segmentSelection.segments.length === 2) {
             [startSeg, endSeg] = segmentSelection.segments;
         }
-        else if (_pathEndSegId !== undefined) {
+        else if (_pathEndSegId) {
             if (segmentSelection.segments[0].attributes.id === _pathEndSegId) {
                 [endSeg] = segmentSelection.segments;
                 startSeg = segmentSelection.segments[segmentSelection.segments.length - 1];
@@ -650,7 +651,7 @@
             _pathEndSegId = evt.feature.model.attributes.id;
     }
 
-    async function onWmeReady() {
+    async function onWazeWrapReady() {
         log('Initializing.');
         await loadSettingsFromStorage();
         _editPanelObserver.observe(document.querySelector('#edit-panel'), {
@@ -665,10 +666,27 @@
         log(`Fully initialized in ${Math.round(performance.now() - LOAD_BEGIN_TIME)} ms.`);
     }
 
+    function onWmeReady(tries = 1) {
+        if (typeof tries === 'object')
+            tries = 1;
+        checkTimeout({ timeout: 'onWmeReady' });
+        if (WazeWrap?.Ready) {
+            logDebug('WazeWrap is ready. Proceeding with initialization.');
+            onWazeWrapReady();
+        }
+        else if (tries < 1000) {
+            logDebug(`WazeWrap is not in Ready state. Retrying ${tries} of 1000.`);
+            _timeouts.onWmeReady = window.setTimeout(onWmeReady, 200, ++tries);
+        }
+        else {
+            logError(new Error('onWmeReady timed out waiting for WazeWrap Ready state.'));
+        }
+    }
+
     function onWmeInitialized() {
         if (W.userscripts?.state?.isReady) {
             logDebug('W is ready and already in "wme-ready" state. Proceeding with initialization.');
-            onWmeReady();
+            onWmeReady(1);
         }
         else {
             logDebug('W is ready, but state is not "wme-ready". Adding event listener.');
