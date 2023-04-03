@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        WME BDP Check (beta)
+// @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
 // @version     2023.04.03.01
 // @description Check for possible BDP routes between two selected segments.
