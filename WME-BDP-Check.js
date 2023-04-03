@@ -1,37 +1,43 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2023.03.15.01
+// @version     2023.04.03.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @match       http*://*.waze.com/*editor*
 // @exclude     http*://*.waze.com/user/editor*
 // @require     https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @grant       none
+// @grant       GM_xmlhttpRequest
+// @connect     greasyfork.org
 // @license     GPLv3
 // ==/UserScript==
 
-/* global $, GM_info, W, WazeWrap */
+/* global $, GM_info, GM_xmlhttpRequest, W, WazeWrap */
 
 (function () {
     'use strict';
 
-    const ALERT_UPDATE = true,
-        DEBUG = true,
-        LOAD_BEGIN_TIME = performance.now(),
-        SCRIPT_AUTHOR = GM_info.script.author,
-        SCRIPT_FORUM_URL = 'https://www.waze.com/forum/viewtopic.php?f=819&t=294789',
-        SCRIPT_GF_URL = 'https://greasyfork.org/en/scripts/393407-wme-bdp-check',
-        SCRIPT_NAME = GM_info.script.name.replace('(beta)', 'β'),
-        SCRIPT_VERSION = GM_info.script.version,
-        SCRIPT_VERSION_CHANGES = ['<b>CHANGE:</b> New bootstrap routine.',
-            '<b>CHANGE:</b> Updated code to use optional chaining.',
-            '<b>CHANGE:</b> Code structure with new linter options.',
-            '<b>CHANGE:</b> Code cleanup.',
-            '<b>CHANGE:</b> Utilize @match instead of @include in userscript headers.'
+    // eslint-disable-next-line no-nested-ternary
+    const _SCRIPT_SHORT_NAME = `WME BDPC${(/beta/.test(GM_info.script.name) ? ' β' : /\(DEV\)/i.test(GM_info.script.name) ? ' Ω' : '')}`,
+        _SCRIPT_LONG_NAME = GM_info.script.name,
+        _IS_ALPHA_VERSION = /[Ω]/.test(_SCRIPT_SHORT_NAME),
+        _IS_BETA_VERSION = /[β]/.test(_SCRIPT_SHORT_NAME),
+        _SCRIPT_AUTHOR = GM_info.script.author,
+        _PROD_URL = 'https://greasyfork.org/scripts/393407-wme-bdp-check/code/WME%20BDP%20Check.user.js',
+        _PROD_META_URL = 'https://greasyfork.org/scripts/393407-wme-bdp-check/code/WME%20BDP%20Check.meta.js',
+        _FORUM_URL = 'https://www.waze.com/forum/viewtopic.php?f=819&t=294789',
+        _SETTINGS_STORE_NAME = 'WMEBDPC',
+        _BETA_URL = 'YUhSMGNITTZMeTluY21WaGMzbG1iM0pyTG05eVp5OXpZM0pwY0hSekx6TTVNVEkzTVMxM2JXVXRZbVJ3TFdOb1pXTnJMV0psZEdFdlkyOWtaUzlYVFVVbE1qQkNSRkFsTWpCRGFHVmpheVV5TUNoaVpYUmhLUzUxYzJWeUxtcHo=',
+        _BETA_META_URL = 'YUhSMGNITTZMeTluY21WaGMzbG1iM0pyTG05eVp5OXpZM0pwY0hSekx6TTVNVEkzTVMxM2JXVXRZbVJ3TFdOb1pXTnJMV0psZEdFdlkyOWtaUzlYVFVVbE1qQkNSRkFsTWpCRGFHVmpheVV5TUNoaVpYUmhLUzV0WlhSaExtcHo=',
+        _ALERT_UPDATE = true,
+        _SCRIPT_VERSION = GM_info.script.version,
+        _SCRIPT_VERSION_CHANGES = ['<b>NEW:</b> Check for updated version on load.',
+            '<b>CHANGE:</b> Future (possible) WME changes preparation.'
         ],
-        SETTINGS_STORE_NAME = 'WMEBDPC',
+        _DEBUG = /[βΩ]/.test(_SCRIPT_SHORT_NAME),
+        _LOAD_BEGIN_TIME = performance.now(),
         sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+        dec = (s = '') => atob(atob(s)),
         _timeouts = { onWmeReady: undefined, saveSettingsToStorage: undefined },
         _editPanelObserver = new MutationObserver((mutations) => {
             if (W.selectionManager.getSegmentSelection().segments.length === 0)
@@ -56,16 +62,17 @@
             });
         });
     let _settings = {},
+        _lastVersionChecked = '0',
         _pathEndSegId,
         _restoreZoomLevel,
         _restoreMapCenter;
 
-    function log(message) { console.log('WME-BDPC:', message); }
-    function logError(message) { console.error('WME-BDPC:', message); }
-    function logWarning(message) { console.warn('WME-BDPC:', message); }
-    function logDebug(message) {
-        if (DEBUG)
-            console.log('WME-BDPC:', message);
+    function log(message, data = '') { console.log(`${_SCRIPT_SHORT_NAME}:`, message, data); }
+    function logError(message, data = '') { console.error(`${_SCRIPT_SHORT_NAME}:`, new Error(message), data); }
+    function logWarning(message, data = '') { console.warn(`${_SCRIPT_SHORT_NAME}:`, message, data); }
+    function logDebug(message, data = '') {
+        if (_DEBUG)
+            log(message, data);
     }
 
     async function loadSettingsFromStorage() {
@@ -73,8 +80,8 @@
                 lastSaved: 0,
                 lastVersion: undefined
             },
-            loadedSettings = $.parseJSON(localStorage.getItem(SETTINGS_STORE_NAME)),
-            serverSettings = await WazeWrap.Remote.RetrieveSettings(SETTINGS_STORE_NAME);
+            loadedSettings = $.parseJSON(localStorage.getItem(_SETTINGS_STORE_NAME)),
+            serverSettings = await WazeWrap.Remote.RetrieveSettings(_SETTINGS_STORE_NAME);
         _settings = $.extend({}, defaultSettings, loadedSettings);
         if (serverSettings?.lastSaved > _settings.lastSaved)
             $.extend(_settings, serverSettings);
@@ -85,28 +92,28 @@
     function saveSettingsToStorage() {
         checkTimeout({ timeout: 'saveSettingsToStorage' });
         if (localStorage) {
-            _settings.lastVersion = SCRIPT_VERSION;
+            _settings.lastVersion = _SCRIPT_VERSION;
             _settings.lastSaved = Date.now();
-            localStorage.setItem(SETTINGS_STORE_NAME, JSON.stringify(_settings));
-            WazeWrap.Remote.SaveSettings(SETTINGS_STORE_NAME, _settings);
+            localStorage.setItem(_SETTINGS_STORE_NAME, JSON.stringify(_settings));
+            WazeWrap.Remote.SaveSettings(_SETTINGS_STORE_NAME, _settings);
             logDebug('Settings saved.');
         }
     }
 
     function showScriptInfoAlert() {
-        if (ALERT_UPDATE && (SCRIPT_VERSION !== _settings.lastVersion)) {
+        if (_ALERT_UPDATE && (_SCRIPT_VERSION !== _settings.lastVersion)) {
             let releaseNotes = '';
             releaseNotes += '<p>What\'s new:</p>';
-            if (SCRIPT_VERSION_CHANGES.length > 0) {
+            if (_SCRIPT_VERSION_CHANGES.length > 0) {
                 releaseNotes += '<ul>';
-                for (let idx = 0; idx < SCRIPT_VERSION_CHANGES.length; idx++)
-                    releaseNotes += `<li>${SCRIPT_VERSION_CHANGES[idx]}`;
+                for (let idx = 0; idx < _SCRIPT_VERSION_CHANGES.length; idx++)
+                    releaseNotes += `<li>${_SCRIPT_VERSION_CHANGES[idx]}`;
                 releaseNotes += '</ul>';
             }
             else {
                 releaseNotes += '<ul><li>Nothing major.</ul>';
             }
-            WazeWrap.Interface.ShowScriptUpdate(SCRIPT_NAME, SCRIPT_VERSION, releaseNotes, SCRIPT_GF_URL, SCRIPT_FORUM_URL);
+            WazeWrap.Interface.ShowScriptUpdate(_SCRIPT_SHORT_NAME, _SCRIPT_VERSION, releaseNotes, (_IS_BETA_VERSION ? dec(_BETA_URL) : _PROD_URL).replace(/code\/.*\.js/, ''), _FORUM_URL);
         }
     }
 
@@ -157,7 +164,7 @@
             _restoreMapCenter = undefined;
         }
         else {
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'Waiting for WME to populate after zoom level change.<br>Proceeding in 2 seconds...');
+            WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'Waiting for WME to populate after zoom level change.<br>Proceeding in 2 seconds...');
             await sleep(2000);
             $('#toast-container-wazedev > .toast-info').find('.toast-close-button').click();
         }
@@ -390,21 +397,19 @@
     }
 
     async function doCheckBDP(viaLM = false) {
-        const selectedFeatures = W.selectionManager.getSelectedFeatures(),
-            segmentSelection = W.selectionManager.getSegmentSelection(),
-            numSelectedFeatureSegments = selectedFeatures.filter((feature) => feature.model.type === 'segment').length;
+        const segmentSelection = W.selectionManager.getSegmentSelection();
         let startSeg,
             endSeg,
             directRoutes = [];
-        if ((segmentSelection.segments.length < 2) || (numSelectedFeatureSegments < 2)) {
+        if (segmentSelection.segments.length < 2) {
             insertCheckBDPButton(true);
-            WazeWrap.Alerts.error(SCRIPT_NAME, 'You must select either the two <i>bracketing segments</i> or an entire detour route with <i>bracketing segments</i>.');
+            WazeWrap.Alerts.error(_SCRIPT_SHORT_NAME, 'You must select either the two <i>bracketing segments</i> or an entire detour route with <i>bracketing segments</i>.');
             return;
         }
-        if (segmentSelection.multipleConnectedComponents && ((segmentSelection.segments.length > 2) || (numSelectedFeatureSegments > 2))) {
+        if (segmentSelection.multipleConnectedComponents && (segmentSelection.segments.length > 2)) {
             insertCheckBDPButton(true);
             WazeWrap.Alerts.error(
-                SCRIPT_NAME,
+                _SCRIPT_SHORT_NAME,
                 'If you select more than 2 segments, the selection of segments must be continuous.<br><br>'
             + 'Either select just the two bracketing segments or an entire detour route with bracketing segments.'
             );
@@ -412,7 +417,7 @@
         }
         if (!segmentSelection.multipleConnectedComponents && (segmentSelection.segments.length === 2)) {
             insertCheckBDPButton(true);
-            WazeWrap.Alerts.error(SCRIPT_NAME, 'You selected only two segments and they connect to each other. There are no alternate routes.');
+            WazeWrap.Alerts.error(_SCRIPT_SHORT_NAME, 'You selected only two segments and they connect to each other. There are no alternate routes.');
             return;
         }
         if (segmentSelection.segments.length === 2) {
@@ -446,17 +451,17 @@
         || (endSeg.attributes.roadType < 3) || (endSeg.attributes.roadType === 4) || (endSeg.attributes.roadType === 5) || (endSeg.attributes.roadType > 7)
         ) {
             insertCheckBDPButton(true);
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'At least one of the bracketing selected segments is not in the correct road type group for BDP.');
+            WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'At least one of the bracketing selected segments is not in the correct road type group for BDP.');
             return;
         }
         if (!rtgContinuityCheck([startSeg, endSeg])) {
             insertCheckBDPButton(true);
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'One bracketing segment is a minor highway while the other is not. BDP only applies when bracketing segments are in the same road type group.');
+            WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'One bracketing segment is a minor highway while the other is not. BDP only applies when bracketing segments are in the same road type group.');
             return;
         }
         if (!nameContinuityCheck([startSeg, endSeg])) {
             insertCheckBDPButton(true);
-            WazeWrap.Alerts.info(SCRIPT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
+            WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'The bracketing segments do not share a street name. BDP will not be applied to any route.');
             return;
         }
         const maxLength = (startSeg.attributes.roadType === 7) ? 5000 : 50000;
@@ -514,7 +519,7 @@
                 }
                 else {
                     insertCheckBDPButton(true);
-                    WazeWrap.Alerts.info(SCRIPT_NAME, `Could not determine the last detour segment. Please send ${SCRIPT_AUTHOR} a message with a PL describing this issue. Thank you!`);
+                    WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, `Could not determine the last detour segment. Please send ${_SCRIPT_AUTHOR} a message with a PL describing this issue. Thank you!`);
                     return;
                 }
             }
@@ -522,7 +527,7 @@
                 detourSegTypes = [...new Set(detourSegs.map((segment) => segment.attributes.roadType))];
             if ([9, 10, 16, 18, 19, 22].some((type) => detourSegTypes.indexOf(type) > -1)) {
                 insertCheckBDPButton(true);
-                WazeWrap.Alerts.info(SCRIPT_NAME, 'Your selection contains one more more segments with an unrouteable road type. The selected route is not a valid route.');
+                WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'Your selection contains one more more segments with an unrouteable road type. The selected route is not a valid route.');
                 return;
             }
             if (![1].some((type) => detourSegTypes.indexOf(type) > -1)) {
@@ -539,25 +544,25 @@
                 startNodeObjs.push(startSeg.getFromNode());
             if (nameContinuityCheck([lastDetourSeg, endSeg])) {
                 insertCheckBDPButton(true);
-                WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment share a common street name.');
+                WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment share a common street name.');
                 doZoom(true, _restoreZoomLevel, _restoreMapCenter);
                 return;
             }
             if (rtgContinuityCheck([lastDetourSeg, endSeg])) {
                 insertCheckBDPButton(true);
-                WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment are in the same road type group.');
+                WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'BDP will not be applied to this detour route because the last detour segment and the second bracketing segment are in the same road type group.');
                 doZoom(true, _restoreZoomLevel, _restoreMapCenter);
                 return;
             }
             if (detourSegs.length < 2) {
                 insertCheckBDPButton(true);
-                WazeWrap.Alerts.info(SCRIPT_NAME, 'BDP will not be applied to this detour route because it is less than 2 segments long.');
+                WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, 'BDP will not be applied to this detour route because it is less than 2 segments long.');
                 doZoom(true, _restoreZoomLevel, _restoreMapCenter);
                 return;
             }
             if (detourSegs.map((seg) => seg.attributes.length).reduce((a, b) => a + b) > ((startSeg.attributes.roadType === 7) ? 500 : 5000)) {
                 insertCheckBDPButton(true);
-                WazeWrap.Alerts.info(SCRIPT_NAME, `BDP will not be applied to this detour route because it is longer than ${((startSeg.attributes.roadType === 7) ? '500m' : '5km')}.`);
+                WazeWrap.Alerts.info(_SCRIPT_SHORT_NAME, `BDP will not be applied to this detour route because it is longer than ${((startSeg.attributes.roadType === 7) ? '500m' : '5km')}.`);
                 doZoom(true, _restoreZoomLevel, _restoreMapCenter);
                 return;
             }
@@ -577,7 +582,7 @@
         }
         if (directRoutes.length > 0) {
             WazeWrap.Alerts.confirm(
-                SCRIPT_NAME,
+                _SCRIPT_SHORT_NAME,
                 'A <b>direct route</b> was found! Would you like to select the direct route?',
                 () => {
                     const segments = [];
@@ -600,7 +605,7 @@
         else if (segmentSelection.segments.length === 2) {
             insertCheckBDPButton(true);
             WazeWrap.Alerts.info(
-                SCRIPT_NAME,
+                _SCRIPT_SHORT_NAME,
                 'No direct routes found between the two selected segments. A BDP penalty <b>will not</b> be applied to any routes.'
                 + '<br><b>Note:</b> This could also be caused by the distance between the two selected segments is longer than than the allowed distance for detours.'
             );
@@ -609,7 +614,7 @@
         else {
             insertCheckBDPButton(true);
             WazeWrap.Alerts.info(
-                SCRIPT_NAME,
+                _SCRIPT_SHORT_NAME,
                 'No direct routes found between the possible detour bracketing segments. A BDP penalty <b>will not</b> be applied to the selected route.'
                 + '<br><b>Note:</b> This could also be because any possible direct routes are very long, which would take longer to travel than taking the selected route (even with penalty).'
             );
@@ -653,8 +658,41 @@
             _pathEndSegId = evt.feature.model.attributes.id;
     }
 
+    function checkBdpcVersion() {
+        if (_IS_ALPHA_VERSION)
+            return;
+        try {
+            const metaUrl = _IS_BETA_VERSION ? dec(_BETA_META_URL) : _PROD_META_URL;
+            GM_xmlhttpRequest({
+                url: metaUrl,
+                onload(res) {
+                    const latestVersion = res.responseText.match(/@version\s+(.*)/)[1];
+                    if ((latestVersion > _SCRIPT_VERSION) && (latestVersion > (_lastVersionChecked || '0'))) {
+                        _lastVersionChecked = latestVersion;
+                        WazeWrap.Alerts.info(
+                            _SCRIPT_LONG_NAME,
+                            `<a href="${(_IS_BETA_VERSION ? dec(_BETA_URL) : _PROD_URL)}" target = "_blank">Version ${latestVersion}</a> is available.<br>Update now to get the latest features and fixes.`,
+                            true,
+                            false
+                        );
+                    }
+                },
+                onerror(res) {
+                    // Silently fail with an error message in the console.
+                    logError('Upgrade version check:', res);
+                }
+            });
+        }
+        catch (err) {
+            // Silently fail with an error message in the console.
+            logError('Upgrade version check:', err);
+        }
+    }
+
     async function onWazeWrapReady() {
         log('Initializing.');
+        checkBdpcVersion();
+        setInterval(checkBdpcVersion, 60 * 60 * 1000);
         await loadSettingsFromStorage();
         _editPanelObserver.observe(document.querySelector('#edit-panel'), {
             childList: true, attributes: false, attributeOldValue: false, characterData: false, characterDataOldValue: false, subtree: true
@@ -665,7 +703,7 @@
         W.selectionManager.selectionMediator.on('map:selection:deselectKey', () => { _pathEndSegId = undefined; });
         W.selectionManager.selectionMediator.on('map:selection:featureBoxSelection', () => { _pathEndSegId = undefined; });
         showScriptInfoAlert();
-        log(`Fully initialized in ${Math.round(performance.now() - LOAD_BEGIN_TIME)} ms.`);
+        log(`Fully initialized in ${Math.round(performance.now() - _LOAD_BEGIN_TIME)} ms.`);
     }
 
     function onWmeReady(tries = 1) {
@@ -681,7 +719,7 @@
             _timeouts.onWmeReady = window.setTimeout(onWmeReady, 200, ++tries);
         }
         else {
-            logError(new Error('onWmeReady timed out waiting for WazeWrap Ready state.'));
+            logError('onWmeReady timed out waiting for WazeWrap Ready state.');
         }
     }
 
