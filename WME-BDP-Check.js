@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
-// @version     2023.05.10.01
+// @version     2023.05.23.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @match       http*://*.waze.com/*editor*
@@ -32,6 +32,7 @@
         _SCRIPT_VERSION_CHANGES = ['CHANGE: Reverted to 100% vanilla JavaScript, removing reliance on jQuery.',
             'CHANGE: Moved buttons and removed code no longer needed.',
             'CHANGE: Switch to WazeWrap for script update checking.',
+            'CHANGE: (2023.05.23.01) WME v2.162-3 changes compliance.',
             'BUGFIX: Buttons not showing up correctly.'
         ],
         _DEBUG = /[βΩ]/.test(_SCRIPT_SHORT_NAME),
@@ -154,7 +155,7 @@
         }
     }
 
-    function getMidpoint(startSeg, endSeg) {
+    function getMidpoint(startSeg, endSeg, olLonLat = false) {
         let startCenter = startSeg.getCenter(),
             endCenter = endSeg.getCenter();
         startCenter = WazeWrap.Geometry.ConvertTo4326(startCenter.x, startCenter.y);
@@ -172,13 +173,18 @@
         const bX = Math.cos(lat2) * Math.cos(dLon),
             bY = Math.cos(lat2) * Math.sin(dLon),
             lat3 = (Math.atan2(Math.sin(lat1) + Math.sin(lat2), Math.sqrt((Math.cos(lat1) + bX) * (Math.cos(lat1) + bX) + bY * bY))) * divPi,
-            lon3 = (lon1 + Math.atan2(bY, Math.cos(lat1) + bX)) * divPi;
-        return WazeWrap.Geometry.ConvertTo900913(lon3, lat3);
+            lon3 = (lon1 + Math.atan2(bY, Math.cos(lat1) + bX)) * divPi,
+            lonLat900913 = WazeWrap.Geometry.ConvertTo900913(lon3, lat3),
+            { lon, lat } = lonLat900913;
+        if (olLonLat)
+            return lonLat900913;
+        return { lon, lat };
     }
 
     async function doZoom(restore = false, zoom = -1, coordObj = {}) {
         if ((zoom === -1) || (Object.entries(coordObj).length === 0))
             return Promise.resolve();
+        // As of WME v2.162-3-gd95a5e841, W.map.setCenter() expects a JS object as { lon, lat }, not an OL LonLat instance.
         W.map.setCenter(coordObj);
         if (W.map.getZoom() !== zoom)
             W.map.getOLMap().zoomTo(zoom);
@@ -489,6 +495,7 @@
             if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 16))
             || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 15))) {
                 _restoreZoomLevel = W.map.getZoom();
+                // As of WME v2.162-3-gd95a5e841, W.map.getCenter() returns a JS object as { lon, lat }, not an OL LonLat instance.
                 _restoreMapCenter = W.map.getCenter();
                 await doZoom(false, (startSeg.attributes.roadType === 7) ? 16 : 15, getMidpoint(startSeg, endSeg));
             }
@@ -552,6 +559,7 @@
                 if (((startSeg.attributes.roadType === 7) && (W.map.getZoom() > 16))
                 || ((startSeg.attributes.roadType !== 7) && (W.map.getZoom() > 15))) {
                     _restoreZoomLevel = W.map.getZoom();
+                    // As of WME v2.162-3-gd95a5e841, W.map.getCenter() returns a JS object as { lon, lat }, not an OL LonLat instance.
                     _restoreMapCenter = W.map.getCenter();
                     await doZoom(false, (startSeg.attributes.roadType === 7) ? 16 : 15, getMidpoint(startSeg, endSeg));
                 }
