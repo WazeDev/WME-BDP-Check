@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME BDP Check (beta)
 // @namespace   https://greasyfork.org/users/166843
-// @version     2023.05.23.01
+// @version     2023.07.20.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @match       http*://*.waze.com/*editor*
@@ -29,12 +29,7 @@
         _BETA_DL_URL = 'YUhSMGNITTZMeTluY21WaGMzbG1iM0pyTG05eVp5OXpZM0pwY0hSekx6TTVNVEkzTVMxM2JXVXRZbVJ3TFdOb1pXTnJMV0psZEdFdlkyOWtaUzlYVFVVbE1qQkNSRkFsTWpCRGFHVmpheVV5TUNoaVpYUmhLUzUxYzJWeUxtcHo=',
         _ALERT_UPDATE = true,
         _SCRIPT_VERSION = GM_info.script.version,
-        _SCRIPT_VERSION_CHANGES = ['CHANGE: Reverted to 100% vanilla JavaScript, removing reliance on jQuery.',
-            'CHANGE: Moved buttons and removed code no longer needed.',
-            'CHANGE: Switch to WazeWrap for script update checking.',
-            'CHANGE: (2023.05.23.01) WME v2.162-3 changes compliance.',
-            'BUGFIX: Buttons not showing up correctly.'
-        ],
+        _SCRIPT_VERSION_CHANGES = ['CHANGE: Compatibility with latest WME release.'],
         _DEBUG = /[βΩ]/.test(_SCRIPT_SHORT_NAME),
         _LOAD_BEGIN_TIME = performance.now(),
         sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -695,7 +690,7 @@
     }
 
     function onSelectionChanged(evt) {
-        insertCheckBDPButton(!(evt.selected.map((a) => a.attributes.repositoryObject).filter((a) => a.type === 'segment').length > 1));
+        insertCheckBDPButton(!(evt.selected.map((a) => a.attributes.wazeFeature).filter((a) => a._wmeObject.type === 'segment').length > 1));
     }
 
     async function onWazeWrapReady() {
