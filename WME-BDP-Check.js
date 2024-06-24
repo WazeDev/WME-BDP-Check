@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME BDP Check
 // @namespace   https://greasyfork.org/users/166843
-// @version     2023.07.20.01
+// @version     2024.06.24.01
 // @description Check for possible BDP routes between two selected segments.
 // @author      dBsooner
 // @match       http*://*.waze.com/*editor*
@@ -151,10 +151,8 @@
     }
 
     function getMidpoint(startSeg, endSeg, olLonLat = false) {
-        let startCenter = startSeg.getCenter(),
-            endCenter = endSeg.getCenter();
-        startCenter = WazeWrap.Geometry.ConvertTo4326(startCenter.x, startCenter.y);
-        endCenter = WazeWrap.Geometry.ConvertTo4326(endCenter.x, endCenter.y);
+        const startCenter = startSeg.getCenterLonLat(),
+            endCenter = endSeg.getCenterLonLat();
         let lon1 = startCenter.lon,
             lat1 = startCenter.lat,
             lat2 = endCenter.lat;
@@ -213,21 +211,21 @@
         let street;
         if (segs[0].attributes.primaryStreetID) {
             street = W.model.streets.getObjectById(segs[0].attributes.primaryStreetID);
-            if (street?.name?.length > 0) {
+            if (street?.getName().length > 0) {
                 if (segs.length === 2)
-                    streetNames.push(street.name);
+                    streetNames.push(street.getName());
                 else
-                    bs1StreetNames.push(street.name);
+                    bs1StreetNames.push(street.getName());
             }
         }
         if (segs[0].attributes.streetIDs.length > 0) {
             for (let i = 0, { length } = segs[0].attributes.streetIDs; i < length; i++) {
                 street = W.model.streets.getObjectById(segs[0].attributes.streetIDs[i]);
-                if (street?.name?.length > 0) {
+                if (street?.getName().length > 0) {
                     if (segs.length === 2)
-                        streetNames.push(street.name);
+                        streetNames.push(street.getName());
                     else
-                        bs1StreetNames.push(street.name);
+                        bs1StreetNames.push(street.getName());
                 }
             }
         }
@@ -237,13 +235,13 @@
         if (segs.length === 2) {
             if (segs[1].attributes.primaryStreetID) {
                 street = W.model.streets.getObjectById(segs[1].attributes.primaryStreetID);
-                if (street?.name && streetNames.includes(street.name))
+                if (street?.getName() && streetNames.includes(street.getName()))
                     return true;
             }
             if (segs[1].attributes.streetIDs.length > 0) {
                 for (let i = 0, { length } = segs[1].attributes.streetIDs; i < length; i++) {
                     street = W.model.streets.getObjectById(segs[1].attributes.streetIDs[i]);
-                    if (street?.name && streetNames.includes(street.name))
+                    if (street?.getName() && streetNames.includes(street.getName()))
                         return true;
                 }
             }
@@ -253,14 +251,14 @@
             const lastIdx = segs.length - 1;
             if (segs[lastIdx].attributes.primaryStreetID) {
                 street = W.model.streets.getObjectById(segs[lastIdx].attributes.primaryStreetID);
-                if (street?.name && (street.name.length > 0))
-                    bs2StreetNames.push(street.name);
+                if (street?.getName() && (street.getName().length > 0))
+                    bs2StreetNames.push(street.getName());
             }
             if (segs[lastIdx].attributes.streetIDs.length > 0) {
                 for (let i = 0, { length } = segs[lastIdx].attributes.streetIDs; i < length; i++) {
                     street = W.model.streets.getObjectById(segs[lastIdx].attributes.streetIDs[i]);
-                    if (street?.name && (street.name.length > 0))
-                        bs2StreetNames.push(street.name);
+                    if (street?.getName() && (street.getName().length > 0))
+                        bs2StreetNames.push(street.getName());
                 }
             }
             if (bs2StreetNames.length === 0)
@@ -269,13 +267,13 @@
             return segs.every((el) => {
                 if (el.attributes.primaryStreetID) {
                     street = W.model.streets.getObjectById(el.attributes.primaryStreetID);
-                    if (street?.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
+                    if (street?.getName() && (bs1StreetNames.includes(street.getName()) || bs2StreetNames.includes(street.getName())))
                         return true;
                 }
                 if (el.attributes.streetIDs.length > 0) {
                     for (let i = 0, { length } = el.attributes.streetIDs; i < length; i++) {
                         street = W.model.streets.getObjectById(el.attributes.streetIDs[i]);
-                        if (street?.name && (bs1StreetNames.includes(street.name) || bs2StreetNames.includes(street.name)))
+                        if (street?.getName() && (bs1StreetNames.includes(street.getName()) || bs2StreetNames.includes(street.getName())))
                             return true;
                     }
                 }
@@ -287,10 +285,8 @@
 
     async function findLiveMapRoutes(startSeg, endSeg, maxLength) {
         let jsonData = { error: false };
-        const start900913center = startSeg.getCenter(),
-            end900913center = endSeg.getCenter(),
-            start4326Center = WazeWrap.Geometry.ConvertTo4326(start900913center.x, start900913center.y),
-            end4326Center = WazeWrap.Geometry.ConvertTo4326(end900913center.x, end900913center.y),
+        const start4326Center = startSeg.getCenterLonLat(),
+            end4326Center = endSeg.getCenterLonLat(),
             // eslint-disable-next-line no-nested-ternary
             url = (W.model.countries.getObjectById(235) || W.model.countries.getObjectById(40) || W.model.countries.getObjectById(182))
                 ? '/RoutingManager/routingRequest?'
@@ -690,7 +686,7 @@
     }
 
     function onSelectionChanged(evt) {
-        insertCheckBDPButton(!(evt.selected.map((a) => a.attributes.wazeFeature).filter((a) => a._wmeObject.type === 'segment').length > 1));
+        insertCheckBDPButton(!(evt.detail?.selected.filter((a) => a._wmeObject.type === 'segment').length > 1));
     }
 
     async function onWazeWrapReady() {
